@@ -5,100 +5,127 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
-const { Pool } = require('pg');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 
-const app = express();
+const {
+    initializeApp,
+    cert
+} = require('firebase-admin/app');
+
+const {
+    getFirestore,
+    Timestamp,
+    FieldValue
+} = require('firebase-admin/firestore');
+
 
 /* =========================================================
-   CONFIGURATION
+   CONFIG
 ========================================================= */
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(
+    process.env.PORT || 3000
+);
 
-const DATABASE_URL = process.env.DATABASE_URL;
-
-if (!DATABASE_URL) {
-    console.error('ERROR: DATABASE_URL is not configured.');
-    process.exit(1);
-}
-
-/*
- * SITE_URL:
- * Your actual public key website.
- */
 const SITE_URL = (
     process.env.SITE_URL ||
     'https://cheats.xo.je'
 ).replace(/\/+$/, '');
 
-/*
- * CALLBACK_BASE_URL:
- *
- * This must be the publicly reachable server containing
- * /api/ad-callback.
- *
- * If cheats.xo.je proxies /api to this Render service,
- * you can set this to:
- *
- * https://cheats.xo.je
- *
- * Otherwise keep:
- *
- * https://fpsapp.onrender.com
- */
 const CALLBACK_BASE_URL = (
     process.env.CALLBACK_BASE_URL ||
     'https://fpsapp.onrender.com'
 ).replace(/\/+$/, '');
 
-/*
- * NEVER hard-code your URL King API key in source code.
- * Put it in Render environment variables.
- */
-const URLKING_API = process.env.URLKING_API;
+const URLKING_API =
+    process.env.URLKING_API;
+
+const ADMIN_PASSWORD =
+    process.env.ADMIN_PASS;
+
+const FIREBASE_SERVICE_ACCOUNT_JSON =
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+
 
 if (!URLKING_API) {
-    console.warn('WARNING: URLKING_API is not configured.');
+    console.warn(
+        'WARNING: URLKING_API is not configured.'
+    );
 }
 
-/*
- * Admin password is supplied through Render environment
- * variable ADMIN_PASS.
- */
-const ADMIN_PASSWORD = process.env.ADMIN_PASS;
-
 if (!ADMIN_PASSWORD) {
-    console.error('ERROR: ADMIN_PASS is not configured.');
+    console.error(
+        'ERROR: ADMIN_PASS is not configured.'
+    );
+
+    process.exit(1);
+}
+
+if (!FIREBASE_SERVICE_ACCOUNT_JSON) {
+    console.error(
+        'ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is not configured.'
+    );
+
     process.exit(1);
 }
 
 
 /* =========================================================
-   POSTGRESQL
+   FIREBASE ADMIN SDK
 ========================================================= */
 
-const pool = new Pool({
-    connectionString: DATABASE_URL,
+let serviceAccount;
 
-    ssl: process.env.NODE_ENV === 'production'
-        ? { rejectUnauthorized: false }
-        : false,
+try {
 
-    max: 10,
+    serviceAccount =
+        JSON.parse(
+            FIREBASE_SERVICE_ACCOUNT_JSON
+        );
 
-    idleTimeoutMillis: 30000,
+} catch (error) {
 
-    connectionTimeoutMillis: 10000
+    console.error(
+        'ERROR: FIREBASE_SERVICE_ACCOUNT_JSON is invalid JSON.'
+    );
+
+    process.exit(1);
+}
+
+
+initializeApp({
+    credential: cert(serviceAccount)
 });
+
+
+const db = getFirestore();
+
+
+/* =========================================================
+   FIRESTORE COLLECTIONS
+========================================================= */
+
+const keysCollection =
+    db.collection('keys');
+
+const adSessionsCollection =
+    db.collection('ad_sessions');
+
+const adminSessionsCollection =
+    db.collection('admin_sessions');
 
 
 /* =========================================================
    EXPRESS
 ========================================================= */
 
-app.set('trust proxy', 1);
+const app = express();
+
+app.set(
+    'trust proxy',
+    1
+);
 
 app.use(
     helmet({
@@ -106,14 +133,18 @@ app.use(
     })
 );
 
-app.use(express.json({
-    limit: '100kb'
-}));
+app.use(
+    express.json({
+        limit: '100kb'
+    })
+);
 
-app.use(express.urlencoded({
-    extended: false,
-    limit: '100kb'
-}));
+app.use(
+    express.urlencoded({
+        extended: false,
+        limit: '100kb'
+    })
+);
 
 
 /* =========================================================
@@ -128,16 +159,35 @@ app.use((req, res, next) => {
         'https://www.cheats.xo.je'
     ];
 
-    const origin = req.headers.origin;
+    const origin =
+        req.headers.origin;
 
-    if (origin && allowedOrigins.includes(origin)) {
-        res.header('Access-Control-Allow-Origin', origin);
-        res.header('Vary', 'Origin');
+    if (
+        origin &&
+        allowedOrigins.includes(origin)
+    ) {
+
+        res.header(
+            'Access-Control-Allow-Origin',
+            origin
+        );
+
+        res.header(
+            'Vary',
+            'Origin'
+        );
+
     } else if (!origin) {
+
         /*
-         * Android native requests normally don't send Origin.
+         * Android native HTTP requests normally
+         * do not send an Origin header.
          */
-        res.header('Access-Control-Allow-Origin', '*');
+
+        res.header(
+            'Access-Control-Allow-Origin',
+            '*'
+        );
     }
 
     res.header(
@@ -169,258 +219,334 @@ app.use((req, res, next) => {
 
 app.use(
     express.static(
-        path.join(__dirname, 'public')
+        path.join(
+            __dirname,
+            'public'
+        )
     )
 );
 
 
 /* =========================================================
-   RATE LIMITERS
+   RATE LIMITING
 ========================================================= */
 
-const publicLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    limit: 60,
-    standardHeaders: true,
-    legacyHeaders: false
-});
+const publicLimiter =
+    rateLimit({
+        windowMs: 60 * 1000,
+        limit: 60,
+        standardHeaders: true,
+        legacyHeaders: false
+    });
 
-const verifyLimiter = rateLimit({
-    windowMs: 60 * 1000,
-    limit: 30,
-    standardHeaders: true,
-    legacyHeaders: false
-});
 
-const adminLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    limit: 30,
-    standardHeaders: true,
-    legacyHeaders: false
-});
+const verifyLimiter =
+    rateLimit({
+        windowMs: 60 * 1000,
+        limit: 30,
+        standardHeaders: true,
+        legacyHeaders: false
+    });
+
+
+const adminLimiter =
+    rateLimit({
+        windowMs: 15 * 60 * 1000,
+        limit: 30,
+        standardHeaders: true,
+        legacyHeaders: false
+    });
 
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
-function now() {
-    return new Date();
-}
-
 function normalizeKey(key) {
+
     return String(key || '')
         .trim()
         .toUpperCase();
 }
+
 
 function generateKey() {
 
     const chars =
         'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-    const bytes = crypto.randomBytes(8);
+    const bytes =
+        crypto.randomBytes(8);
 
     let suffix = '';
 
-    for (let i = 0; i < 8; i++) {
-        suffix += chars[bytes[i] % chars.length];
+    for (
+        let i = 0;
+        i < 8;
+        i++
+    ) {
+
+        suffix +=
+            chars[
+                bytes[i] % chars.length
+            ];
     }
 
     return `SRT_${suffix}`;
 }
 
+
 function generateToken() {
-    return crypto.randomBytes(32).toString('hex');
+
+    return crypto
+        .randomBytes(32)
+        .toString('hex');
 }
+
 
 function hashToken(token) {
 
     return crypto
         .createHash('sha256')
-        .update(token)
+        .update(String(token))
         .digest('hex');
 }
 
+
 function safeEqual(a, b) {
 
-    const aa = Buffer.from(String(a));
-    const bb = Buffer.from(String(b));
+    const aa =
+        Buffer.from(String(a));
 
-    if (aa.length !== bb.length) {
+    const bb =
+        Buffer.from(String(b));
+
+    if (
+        aa.length !== bb.length
+    ) {
         return false;
     }
 
-    return crypto.timingSafeEqual(aa, bb);
+    return crypto.timingSafeEqual(
+        aa,
+        bb
+    );
 }
+
 
 function isValidDate(value) {
 
-    const d = new Date(value);
+    const date =
+        new Date(value);
 
-    return !Number.isNaN(d.getTime());
+    return !Number.isNaN(
+        date.getTime()
+    );
 }
+
+
+function toDate(value) {
+
+    if (!value) {
+        return null;
+    }
+
+    if (
+        value instanceof Timestamp
+    ) {
+        return value.toDate();
+    }
+
+    if (
+        value &&
+        typeof value.toDate === 'function'
+    ) {
+        return value.toDate();
+    }
+
+    return new Date(value);
+}
+
 
 function daysLeft(expiresAt) {
 
-    const diff =
-        new Date(expiresAt).getTime() -
+    const expiry =
+        toDate(expiresAt);
+
+    if (!expiry) {
+        return 0;
+    }
+
+    const difference =
+        expiry.getTime() -
         Date.now();
 
     return Math.max(
         0,
         Math.ceil(
-            diff /
-            (1000 * 60 * 60 * 24)
+            difference /
+            (
+                1000 *
+                60 *
+                60 *
+                24
+            )
         )
     );
 }
 
 
-/* =========================================================
-   DATABASE INITIALIZATION
-========================================================= */
+function timestampFromDate(date) {
 
-async function initializeDatabase() {
+    return Timestamp.fromDate(
+        new Date(date)
+    );
+}
 
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS keys (
-            id BIGSERIAL PRIMARY KEY,
 
-            key_value VARCHAR(64) UNIQUE NOT NULL,
+function serializeKey(
+    document
+) {
 
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    const data =
+        document.data();
 
-            expires_at TIMESTAMPTZ NOT NULL,
+    return {
+        id: document.id,
 
-            login_limit INTEGER NOT NULL DEFAULT 1,
+        key: data.key_value,
 
-            login_count INTEGER NOT NULL DEFAULT 0,
+        key_value: data.key_value,
 
-            type VARCHAR(32) NOT NULL DEFAULT 'standard',
+        createdAt:
+            toDate(
+                data.created_at
+            )?.toISOString() || null,
 
-            label TEXT NOT NULL DEFAULT '',
+        expiresAt:
+            toDate(
+                data.expires_at
+            )?.toISOString() || null,
 
-            note TEXT NOT NULL DEFAULT '',
+        loginLimit:
+            Number(
+                data.login_limit || 0
+            ),
 
-            hwid VARCHAR(255),
+        loginCount:
+            Number(
+                data.login_count || 0
+            ),
 
-            last_used_at TIMESTAMPTZ
-        );
-    `);
+        type:
+            data.type || 'standard',
 
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS idx_keys_expires_at
-        ON keys(expires_at);
-    `);
+        label:
+            data.label || '',
 
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS idx_keys_hwid
-        ON keys(hwid);
-    `);
+        note:
+            data.note || '',
 
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS ad_sessions (
-            id VARCHAR(64) PRIMARY KEY,
+        hwid:
+            data.hwid || null,
 
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-            expires_at TIMESTAMPTZ NOT NULL,
-
-            completed BOOLEAN NOT NULL DEFAULT FALSE,
-
-            key_value VARCHAR(64)
-        );
-    `);
-
-    await pool.query(`
-        CREATE INDEX IF NOT EXISTS idx_ad_sessions_expires_at
-        ON ad_sessions(expires_at);
-    `);
-
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS admin_sessions (
-            token_hash VARCHAR(64) PRIMARY KEY,
-
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-            expires_at TIMESTAMPTZ NOT NULL
-        );
-    `);
-
-    console.log('Database initialized successfully.');
+        lastUsedAt:
+            toDate(
+                data.last_used_at
+            )?.toISOString() || null
+    };
 }
 
 
 /* =========================================================
-   HEALTH CHECK
+   FIRESTORE KEY GENERATION
 ========================================================= */
 
-app.get('/health', async (req, res) => {
+async function createUniqueKey() {
 
-    try {
+    for (
+        let attempt = 0;
+        attempt < 20;
+        attempt++
+    ) {
 
-        await pool.query('SELECT 1');
+        const key =
+            generateKey();
 
-        res.json({
-            ok: true,
-            service: 'SRT X CHEATS',
-            database: 'connected',
-            timestamp: new Date().toISOString()
-        });
+        const snapshot =
+            await keysCollection
+                .where(
+                    'key_value',
+                    '==',
+                    key
+                )
+                .limit(1)
+                .get();
 
-    } catch (error) {
-
-        console.error('Health check error:', error);
-
-        res.status(503).json({
-            ok: false,
-            service: 'SRT X CHEATS',
-            database: 'disconnected'
-        });
-    }
-});
-
-
-/* =========================================================
-   KEY GENERATION
-========================================================= */
-
-async function createUniqueKey(client) {
-
-    for (let attempt = 0; attempt < 20; attempt++) {
-
-        const key = generateKey();
-
-        const result = await client.query(
-            `
-            SELECT id
-            FROM keys
-            WHERE key_value = $1
-            `,
-            [key]
-        );
-
-        if (result.rowCount === 0) {
+        if (
+            snapshot.empty
+        ) {
             return key;
         }
     }
 
-    throw new Error('Unable to generate unique key.');
+    throw new Error(
+        'Unable to generate unique key.'
+    );
 }
 
 
 /* =========================================================
-   AD FLOW
+   HEALTH
 ========================================================= */
 
-/*
- * Step 1:
- *
- * POST /api/init-key-request
- *
- * Creates a temporary session and returns URL King URL.
- */
+app.get(
+    '/health',
+    async (req, res) => {
+
+        try {
+
+            /*
+             * Small Firestore read to verify
+             * the Admin SDK connection.
+             */
+
+            await db
+                .collection('_health')
+                .doc('status')
+                .get();
+
+            return res.json({
+                ok: true,
+                service: 'SRT X CHEATS',
+                database: 'firebase-firestore',
+                firebaseProject:
+                    serviceAccount.project_id ||
+                    'configured',
+                timestamp:
+                    new Date().toISOString()
+            });
+
+        } catch (error) {
+
+            console.error(
+                'Health error:',
+                error
+            );
+
+            return res.status(503).json({
+                ok: false,
+                service: 'SRT X CHEATS',
+                database: 'disconnected'
+            });
+        }
+    }
+);
+
+
+/* =========================================================
+   INITIALIZE AD SESSION
+========================================================= */
 
 app.post(
     '/api/init-key-request',
@@ -430,59 +556,66 @@ app.post(
         try {
 
             if (!URLKING_API) {
+
                 return res.status(503).json({
                     success: false,
-                    error: 'Ad service is not configured'
+                    error:
+                        'Ad service is not configured'
                 });
             }
 
-            /*
-             * Remove old sessions.
-             */
-            await pool.query(`
-                DELETE FROM ad_sessions
-                WHERE expires_at < NOW()
-            `);
 
             const sessionId =
-                crypto.randomBytes(16).toString('hex');
+                crypto
+                    .randomBytes(16)
+                    .toString('hex');
 
-            await pool.query(
-                `
-                INSERT INTO ad_sessions
-                (
-                    id,
-                    created_at,
-                    expires_at,
-                    completed,
-                    key_value
-                )
-                VALUES
-                (
-                    $1,
-                    NOW(),
-                    NOW() + INTERVAL '2 hours',
-                    FALSE,
-                    NULL
-                )
-                `,
-                [sessionId]
-            );
 
-            /*
-             * IMPORTANT:
-             *
-             * URL King must be able to reach this endpoint.
-             */
+            const now =
+                new Date();
+
+            const expiresAt =
+                new Date(
+                    now.getTime() +
+                    2 *
+                    60 *
+                    60 *
+                    1000
+                );
+
+
+            await adSessionsCollection
+                .doc(sessionId)
+                .set({
+
+                    created_at:
+                        Timestamp.fromDate(now),
+
+                    expires_at:
+                        Timestamp.fromDate(
+                            expiresAt
+                        ),
+
+                    completed: false,
+
+                    key_value: null
+                });
+
+
             const callbackUrl =
                 `${CALLBACK_BASE_URL}/api/ad-callback?session=${encodeURIComponent(sessionId)}`;
+
 
             const redirectUrl =
                 `https://go.urlking.in/st?api=${encodeURIComponent(URLKING_API)}&url=${encodeURIComponent(callbackUrl)}`;
 
+
             return res.json({
+
                 success: true,
+
                 sessionId,
+
                 redirectUrl
             });
 
@@ -494,70 +627,294 @@ app.post(
             );
 
             return res.status(500).json({
+
                 success: false,
-                error: 'Unable to initialize key request'
+
+                error:
+                    'Unable to initialize key request'
             });
         }
     }
 );
 
 
-/*
- * Step 2:
- *
- * URL King -> backend callback
- *
- * /api/ad-callback?session=XXXX
- */
+/* =========================================================
+   URL KING CALLBACK
+========================================================= */
 
 app.get(
     '/api/ad-callback',
     async (req, res) => {
 
         const sessionId =
-            String(req.query.session || '').trim();
+            String(
+                req.query.session || ''
+            ).trim();
+
 
         if (!sessionId) {
+
             return res.redirect(
                 `${SITE_URL}/?error=no_session`
             );
         }
 
-        const client = await pool.connect();
 
         try {
 
-            await client.query('BEGIN');
+            const sessionRef =
+                adSessionsCollection
+                    .doc(sessionId);
 
-            const sessionResult =
-                await client.query(
-                    `
-                    SELECT *
-                    FROM ad_sessions
-                    WHERE id = $1
-                    FOR UPDATE
-                    `,
-                    [sessionId]
+
+            /*
+             * Firestore transaction:
+             *
+             * This prevents two callback requests
+             * from creating two keys for the same
+             * advertising session.
+             */
+
+            const result =
+                await db.runTransaction(
+                    async transaction => {
+
+                        const sessionSnapshot =
+                            await transaction.get(
+                                sessionRef
+                            );
+
+
+                        if (
+                            !sessionSnapshot.exists
+                        ) {
+
+                            throw new Error(
+                                'INVALID_SESSION'
+                            );
+                        }
+
+
+                        const session =
+                            sessionSnapshot.data();
+
+
+                        const expiresAt =
+                            toDate(
+                                session.expires_at
+                            );
+
+
+                        if (
+                            !expiresAt ||
+                            expiresAt.getTime() <
+                            Date.now()
+                        ) {
+
+                            throw new Error(
+                                'EXPIRED_SESSION'
+                            );
+                        }
+
+
+                        /*
+                         * Callback replay:
+                         *
+                         * Return the same key.
+                         */
+
+                        if (
+                            session.completed &&
+                            session.key_value
+                        ) {
+
+                            return {
+                                key:
+                                    session.key_value,
+
+                                alreadyCompleted:
+                                    true
+                            };
+                        }
+
+
+                        /*
+                         * Generate key.
+                         *
+                         * Firestore transaction does not
+                         * support an arbitrary asynchronous
+                         * query safely inside all retry
+                         * scenarios, so use the deterministic
+                         * random key as the document ID.
+                         */
+
+                        let newKey =
+                            generateKey();
+
+
+                        /*
+                         * Very unlikely collision.
+                         * If the key document exists,
+                         * regenerate.
+                         */
+
+                        let keyRef =
+                            keysCollection
+                                .doc(newKey);
+
+
+                        let keySnapshot =
+                            await transaction.get(
+                                keyRef
+                            );
+
+
+                        let attempts = 0;
+
+                        while (
+                            keySnapshot.exists &&
+                            attempts < 10
+                        ) {
+
+                            newKey =
+                                generateKey();
+
+                            keyRef =
+                                keysCollection
+                                    .doc(newKey);
+
+                            keySnapshot =
+                                await transaction.get(
+                                    keyRef
+                                );
+
+                            attempts++;
+                        }
+
+
+                        if (
+                            keySnapshot.exists
+                        ) {
+
+                            throw new Error(
+                                'KEY_GENERATION_FAILED'
+                            );
+                        }
+
+
+                        const now =
+                            new Date();
+
+
+                        const expires =
+                            new Date(
+                                now.getTime() +
+                                7 *
+                                24 *
+                                60 *
+                                60 *
+                                1000
+                            );
+
+
+                        transaction.set(
+                            keyRef,
+                            {
+
+                                key_value:
+                                    newKey,
+
+                                created_at:
+                                    Timestamp.fromDate(
+                                        now
+                                    ),
+
+                                expires_at:
+                                    Timestamp.fromDate(
+                                        expires
+                                    ),
+
+                                login_limit:
+                                    1,
+
+                                login_count:
+                                    0,
+
+                                type:
+                                    'standard',
+
+                                label:
+                                    '',
+
+                                note:
+                                    'Auto-generated via URL King ad',
+
+                                hwid:
+                                    null,
+
+                                last_used_at:
+                                    null
+                            }
+                        );
+
+
+                        transaction.update(
+                            sessionRef,
+                            {
+
+                                completed:
+                                    true,
+
+                                key_value:
+                                    newKey,
+
+                                completed_at:
+                                    Timestamp.fromDate(
+                                        now
+                                    )
+                            }
+                        );
+
+
+                        return {
+
+                            key:
+                                newKey,
+
+                            alreadyCompleted:
+                                false
+                        };
+                    }
                 );
 
-            if (sessionResult.rowCount === 0) {
 
-                await client.query('ROLLBACK');
+            return res.redirect(
+                `${SITE_URL}/?key=${encodeURIComponent(result.key)}&session=${encodeURIComponent(sessionId)}${result.alreadyCompleted ? '&already=1' : ''}`
+            );
+
+        } catch (error) {
+
+            console.error(
+                'ad-callback error:',
+                error
+            );
+
+
+            if (
+                error.message ===
+                'INVALID_SESSION'
+            ) {
 
                 return res.redirect(
                     `${SITE_URL}/?error=invalid_session`
                 );
             }
 
-            const session =
-                sessionResult.rows[0];
 
             if (
-                new Date(session.expires_at).getTime()
-                < Date.now()
+                error.message ===
+                'EXPIRED_SESSION'
             ) {
-
-                await client.query('ROLLBACK');
 
                 return res.redirect(
                     `${SITE_URL}/?error=expired`
@@ -565,119 +922,16 @@ app.get(
             }
 
 
-            /*
-             * Already completed:
-             *
-             * Return exactly the same key.
-             *
-             * This prevents duplicate keys if the
-             * callback is opened more than once.
-             */
-            if (session.completed && session.key_value) {
-
-                await client.query('COMMIT');
-
-                return res.redirect(
-                    `${SITE_URL}/?key=${encodeURIComponent(session.key_value)}&session=${encodeURIComponent(sessionId)}&already=1`
-                );
-            }
-
-
-            /*
-             * Create key.
-             */
-            const newKey =
-                await createUniqueKey(client);
-
-            const expiresAt =
-                new Date(
-                    Date.now() +
-                    7 * 24 * 60 * 60 * 1000
-                );
-
-
-            await client.query(
-                `
-                INSERT INTO keys
-                (
-                    key_value,
-                    created_at,
-                    expires_at,
-                    login_limit,
-                    login_count,
-                    type,
-                    label,
-                    note,
-                    hwid
-                )
-                VALUES
-                (
-                    $1,
-                    NOW(),
-                    $2,
-                    1,
-                    0,
-                    'standard',
-                    '',
-                    'Auto-generated via URL King ad',
-                    NULL
-                )
-                `,
-                [
-                    newKey,
-                    expiresAt
-                ]
-            );
-
-
-            /*
-             * Mark session completed.
-             */
-            await client.query(
-                `
-                UPDATE ad_sessions
-                SET
-                    completed = TRUE,
-                    key_value = $1
-                WHERE id = $2
-                `,
-                [
-                    newKey,
-                    sessionId
-                ]
-            );
-
-
-            await client.query('COMMIT');
-
-
-            return res.redirect(
-                `${SITE_URL}/?key=${encodeURIComponent(newKey)}&session=${encodeURIComponent(sessionId)}`
-            );
-
-        } catch (error) {
-
-            await client.query('ROLLBACK');
-
-            console.error(
-                'ad-callback error:',
-                error
-            );
-
             return res.redirect(
                 `${SITE_URL}/?error=server_error`
             );
-
-        } finally {
-
-            client.release();
         }
     }
 );
 
 
 /* =========================================================
-   CHECK SESSION
+   CHECK AD SESSION
 ========================================================= */
 
 app.get(
@@ -686,39 +940,51 @@ app.get(
     async (req, res) => {
 
         const sessionId =
-            String(req.query.session || '').trim();
+            String(
+                req.query.session || ''
+            ).trim();
+
 
         if (!sessionId) {
+
             return res.json({
                 status: 'invalid'
             });
         }
 
+
         try {
 
-            const result =
-                await pool.query(
-                    `
-                    SELECT *
-                    FROM ad_sessions
-                    WHERE id = $1
-                    `,
-                    [sessionId]
-                );
+            const snapshot =
+                await adSessionsCollection
+                    .doc(sessionId)
+                    .get();
 
-            if (result.rowCount === 0) {
+
+            if (
+                !snapshot.exists
+            ) {
 
                 return res.json({
                     status: 'invalid'
                 });
             }
 
+
             const session =
-                result.rows[0];
+                snapshot.data();
+
+
+            const expiresAt =
+                toDate(
+                    session.expires_at
+                );
+
 
             if (
-                new Date(session.expires_at).getTime()
-                < Date.now()
+                !expiresAt ||
+                expiresAt.getTime() <
+                Date.now()
             ) {
 
                 return res.json({
@@ -726,16 +992,22 @@ app.get(
                 });
             }
 
+
             if (
                 session.completed &&
                 session.key_value
             ) {
 
                 return res.json({
-                    status: 'completed',
-                    key: session.key_value
+
+                    status:
+                        'completed',
+
+                    key:
+                        session.key_value
                 });
             }
+
 
             return res.json({
                 status: 'pending'
@@ -757,25 +1029,8 @@ app.get(
 
 
 /* =========================================================
-   ANDROID KEY LOGIN / VERIFICATION
+   ANDROID KEY VERIFICATION
 ========================================================= */
-
-/*
- * GET /api/verify-key
- *
- * Parameters:
- *
- * key=SRT_XXXXXXXX
- * hwid=ANDROID_DEVICE_ID
- *
- * IMPORTANT:
- *
- * loginCount is incremented atomically.
- *
- * First device binds the HWID.
- *
- * Subsequent devices are rejected.
- */
 
 app.get(
     '/api/verify-key',
@@ -783,216 +1038,322 @@ app.get(
     async (req, res) => {
 
         const key =
-            normalizeKey(req.query.key);
+            normalizeKey(
+                req.query.key
+            );
 
         const hwid =
-            String(req.query.hwid || '').trim();
+            String(
+                req.query.hwid || ''
+            ).trim();
+
 
         if (!key) {
 
             return res.status(400).json({
+
                 valid: false,
-                code: 'KEY_REQUIRED',
-                message: 'No key provided'
+
+                code:
+                    'KEY_REQUIRED',
+
+                message:
+                    'No key provided'
             });
         }
+
 
         if (!hwid) {
 
             return res.status(400).json({
+
                 valid: false,
-                code: 'HWID_REQUIRED',
-                message: 'HWID is required'
+
+                code:
+                    'HWID_REQUIRED',
+
+                message:
+                    'HWID is required'
             });
         }
 
-        const client =
-            await pool.connect();
 
         try {
 
-            await client.query('BEGIN');
+            /*
+             * The key itself is the Firestore document ID.
+             */
+
+            const keyRef =
+                keysCollection
+                    .doc(key);
+
 
             const result =
-                await client.query(
-                    `
-                    SELECT *
-                    FROM keys
-                    WHERE key_value = $1
-                    FOR UPDATE
-                    `,
-                    [key]
+                await db.runTransaction(
+                    async transaction => {
+
+                        const snapshot =
+                            await transaction.get(
+                                keyRef
+                            );
+
+
+                        if (
+                            !snapshot.exists
+                        ) {
+
+                            return {
+                                valid: false,
+
+                                code:
+                                    'KEY_NOT_FOUND',
+
+                                status:
+                                    404
+                            };
+                        }
+
+
+                        const data =
+                            snapshot.data();
+
+
+                        const expiresAt =
+                            toDate(
+                                data.expires_at
+                            );
+
+
+                        /*
+                         * Expiry.
+                         */
+
+                        if (
+                            !expiresAt ||
+                            expiresAt.getTime() <=
+                            Date.now()
+                        ) {
+
+                            return {
+
+                                valid: false,
+
+                                code:
+                                    'KEY_EXPIRED',
+
+                                status:
+                                    403,
+
+                                expiredAt:
+                                    expiresAt
+                                        ?.toISOString()
+                            };
+                        }
+
+
+                        /*
+                         * Existing HWID.
+                         */
+
+                        if (
+                            data.hwid &&
+                            data.hwid !== hwid
+                        ) {
+
+                            return {
+
+                                valid: false,
+
+                                code:
+                                    'HWID_MISMATCH',
+
+                                status:
+                                    403
+                            };
+                        }
+
+
+                        const loginLimit =
+                            Number(
+                                data.login_limit ||
+                                0
+                            );
+
+                        const loginCount =
+                            Number(
+                                data.login_count ||
+                                0
+                            );
+
+
+                        /*
+                         * If this key is already bound
+                         * to this same device, allow
+                         * repeated verification without
+                         * consuming another login slot.
+                         */
+
+                        if (
+                            data.hwid &&
+                            data.hwid === hwid
+                        ) {
+
+                            transaction.update(
+                                keyRef,
+                                {
+                                    last_used_at:
+                                        FieldValue.serverTimestamp()
+                                }
+                            );
+
+
+                            return {
+
+                                valid: true,
+
+                                code:
+                                    'VALID',
+
+                                message:
+                                    'Key valid',
+
+                                key:
+                                    data.key_value,
+
+                                expiresAt:
+                                    expiresAt.toISOString(),
+
+                                daysLeft:
+                                    daysLeft(
+                                        expiresAt
+                                    ),
+
+                                loginCount,
+
+                                loginLimit,
+
+                                type:
+                                    data.type ||
+                                    'standard',
+
+                                label:
+                                    data.label ||
+                                    '',
+
+                                hwidBound:
+                                    true
+                            };
+                        }
+
+
+                        /*
+                         * Login limit.
+                         *
+                         * loginLimit = 0 means unlimited.
+                         */
+
+                        if (
+                            loginLimit > 0 &&
+                            loginCount >=
+                            loginLimit
+                        ) {
+
+                            return {
+
+                                valid: false,
+
+                                code:
+                                    'LOGIN_LIMIT_REACHED',
+
+                                status:
+                                    403
+                            };
+                        }
+
+
+                        /*
+                         * First login:
+                         * bind HWID and consume
+                         * one login.
+                         */
+
+                        const newLoginCount =
+                            loginCount + 1;
+
+
+                        transaction.update(
+                            keyRef,
+                            {
+
+                                hwid:
+                                    hwid,
+
+                                login_count:
+                                    newLoginCount,
+
+                                last_used_at:
+                                    FieldValue.serverTimestamp()
+                            }
+                        );
+
+
+                        return {
+
+                            valid: true,
+
+                            code:
+                                'VALID',
+
+                            message:
+                                'Key valid',
+
+                            key:
+                                data.key_value,
+
+                            expiresAt:
+                                expiresAt.toISOString(),
+
+                            daysLeft:
+                                daysLeft(
+                                    expiresAt
+                                ),
+
+                            loginCount:
+                                newLoginCount,
+
+                            loginLimit,
+
+                            type:
+                                data.type ||
+                                'standard',
+
+                            label:
+                                data.label ||
+                                '',
+
+                            hwidBound:
+                                true
+                        };
+                    }
                 );
 
-            if (result.rowCount === 0) {
 
-                await client.query('ROLLBACK');
-
-                return res.status(404).json({
-                    valid: false,
-                    code: 'KEY_NOT_FOUND',
-                    message: 'Key not found'
-                });
-            }
-
-            const keyData =
-                result.rows[0];
-
-            const expiry =
-                new Date(keyData.expires_at);
-
-            const currentTime =
-                new Date();
-
-
-            /*
-             * Expiry check.
-             */
-            if (currentTime > expiry) {
-
-                await client.query('ROLLBACK');
-
-                return res.status(403).json({
-                    valid: false,
-                    code: 'KEY_EXPIRED',
-                    message: 'Key expired',
-                    expiredAt: keyData.expires_at
-                });
-            }
-
-
-            /*
-             * HWID check.
-             */
             if (
-                keyData.hwid &&
-                keyData.hwid !== hwid
+                result.valid === false
             ) {
 
-                await client.query('ROLLBACK');
-
-                return res.status(403).json({
-                    valid: false,
-                    code: 'HWID_MISMATCH',
-                    message: 'HWID mismatch — different device'
-                });
+                return res.status(
+                    result.status || 403
+                ).json(result);
             }
 
 
-            /*
-             * Login limit.
-             *
-             * If HWID is already bound, every successful
-             * verification still consumes a login according
-             * to your existing login-limit design.
-             */
-            if (
-                keyData.login_limit > 0 &&
-                keyData.login_count >= keyData.login_limit
-            ) {
-
-                /*
-                 * Allow same bound device to be recognized,
-                 * but DO NOT silently increase the count.
-                 *
-                 * This makes Android "session login" practical.
-                 */
-                if (
-                    keyData.hwid &&
-                    keyData.hwid === hwid
-                ) {
-
-                    const response = {
-                        valid: true,
-                        code: 'VALID',
-                        message: 'Key valid',
-                        key: keyData.key_value,
-                        expiresAt: keyData.expires_at,
-                        daysLeft: daysLeft(keyData.expires_at),
-                        loginCount: keyData.login_count,
-                        loginLimit: keyData.login_limit,
-                        type: keyData.type,
-                        label: keyData.label || '',
-                        hwidBound: true
-                    };
-
-                    await client.query('ROLLBACK');
-
-                    return res.json(response);
-                }
-
-                await client.query('ROLLBACK');
-
-                return res.status(403).json({
-                    valid: false,
-                    code: 'LOGIN_LIMIT_REACHED',
-                    message: 'Login limit reached'
-                });
-            }
-
-
-            /*
-             * First login:
-             * bind HWID.
-             */
-            let boundHwid =
-                keyData.hwid;
-
-            if (!boundHwid) {
-                boundHwid = hwid;
-            }
-
-
-            /*
-             * Successful login.
-             */
-            const newLoginCount =
-                Number(keyData.login_count || 0) + 1;
-
-
-            const updateResult =
-                await client.query(
-                    `
-                    UPDATE keys
-                    SET
-                        hwid = $1,
-                        login_count = $2,
-                        last_used_at = NOW()
-                    WHERE id = $3
-                    RETURNING *
-                    `,
-                    [
-                        boundHwid,
-                        newLoginCount,
-                        keyData.id
-                    ]
-                );
-
-
-            await client.query('COMMIT');
-
-
-            const updated =
-                updateResult.rows[0];
-
-
-            return res.json({
-                valid: true,
-                code: 'VALID',
-                message: 'Key valid',
-                key: updated.key_value,
-                expiresAt: updated.expires_at,
-                daysLeft: daysLeft(updated.expires_at),
-                loginCount: updated.login_count,
-                loginLimit: updated.login_limit,
-                type: updated.type,
-                label: updated.label || '',
-                hwidBound: true
-            });
+            return res.json(
+                result
+            );
 
         } catch (error) {
-
-            await client.query('ROLLBACK');
 
             console.error(
                 'verify-key error:',
@@ -1000,58 +1361,99 @@ app.get(
             );
 
             return res.status(500).json({
+
                 valid: false,
-                code: 'SERVER_ERROR',
-                message: 'Server error'
+
+                code:
+                    'SERVER_ERROR',
+
+                message:
+                    'Server error'
             });
-
-        } finally {
-
-            client.release();
         }
     }
 );
 
 
 /* =========================================================
-   ADMIN AUTHENTICATION
+   ADMIN AUTH
 ========================================================= */
 
-async function adminAuth(req, res, next) {
+async function adminAuth(
+    req,
+    res,
+    next
+) {
 
     const token =
-        req.headers['x-admin-token'] ||
+        req.headers[
+            'x-admin-token'
+        ] ||
         req.query.token;
+
 
     if (!token) {
 
         return res.status(401).json({
-            error: 'Unauthorized'
+
+            error:
+                'Unauthorized'
         });
     }
+
 
     try {
 
         const tokenHash =
             hashToken(token);
 
-        const result =
-            await pool.query(
-                `
-                SELECT token_hash
-                FROM admin_sessions
-                WHERE token_hash = $1
-                AND expires_at > NOW()
-                `,
-                [tokenHash]
-            );
 
-        if (result.rowCount === 0) {
+        const snapshot =
+            await adminSessionsCollection
+                .doc(tokenHash)
+                .get();
+
+
+        if (
+            !snapshot.exists
+        ) {
 
             return res.status(401).json({
-                error: 'Invalid or expired admin session'
+
+                error:
+                    'Invalid or expired admin session'
             });
         }
+
+
+        const session =
+            snapshot.data();
+
+
+        const expiresAt =
+            toDate(
+                session.expires_at
+            );
+
+
+        if (
+            !expiresAt ||
+            expiresAt.getTime() <=
+            Date.now()
+        ) {
+
+            await adminSessionsCollection
+                .doc(tokenHash)
+                .delete();
+
+
+            return res.status(401).json({
+
+                error:
+                    'Invalid or expired admin session'
+            });
+        }
+
 
         next();
 
@@ -1063,7 +1465,9 @@ async function adminAuth(req, res, next) {
         );
 
         return res.status(500).json({
-            error: 'Authentication error'
+
+            error:
+                'Authentication error'
         });
     }
 }
@@ -1079,68 +1483,122 @@ app.post(
     async (req, res) => {
 
         const password =
-            String(req.body.password || '');
+            String(
+                req.body.password || ''
+            );
+
 
         if (!password) {
 
             return res.status(400).json({
+
                 success: false,
-                error: 'Password required'
+
+                error:
+                    'Password required'
             });
         }
 
-        if (!safeEqual(password, ADMIN_PASSWORD)) {
+
+        if (
+            !safeEqual(
+                password,
+                ADMIN_PASSWORD
+            )
+        ) {
 
             return res.status(401).json({
+
                 success: false,
-                error: 'Wrong password'
+
+                error:
+                    'Wrong password'
             });
         }
+
 
         try {
 
             /*
-             * Clean old admin sessions.
+             * Delete expired sessions.
              */
-            await pool.query(`
-                DELETE FROM admin_sessions
-                WHERE expires_at < NOW()
-            `);
+
+            const expired =
+                await adminSessionsCollection
+                    .where(
+                        'expires_at',
+                        '<=',
+                        Timestamp.now()
+                    )
+                    .get();
+
+
+            const batch =
+                db.batch();
+
+
+            expired.forEach(
+                document => {
+                    batch.delete(
+                        document.ref
+                    );
+                }
+            );
+
+
+            if (
+                !expired.empty
+            ) {
+                await batch.commit();
+            }
+
 
             const token =
                 generateToken();
 
+
             const tokenHash =
                 hashToken(token);
 
-            await pool.query(
-                `
-                INSERT INTO admin_sessions
-                (
-                    token_hash,
-                    created_at,
-                    expires_at
-                )
-                VALUES
-                (
-                    $1,
-                    NOW(),
-                    NOW() + INTERVAL '24 hours'
-                )
-                `,
-                [tokenHash]
-            );
+
+            const expires =
+                new Date(
+                    Date.now() +
+                    24 *
+                    60 *
+                    60 *
+                    1000
+                );
+
+
+            await adminSessionsCollection
+                .doc(tokenHash)
+                .set({
+
+                    created_at:
+                        FieldValue.serverTimestamp(),
+
+                    expires_at:
+                        Timestamp.fromDate(
+                            expires
+                        )
+                });
+
 
             /*
              * IMPORTANT:
              *
-             * We NEVER return ADMIN_PASSWORD.
-             * Only a random temporary session token.
+             * Never return ADMIN_PASSWORD.
              */
+
             return res.json({
+
                 success: true,
+
                 token,
-                expiresIn: 86400
+
+                expiresIn:
+                    86400
             });
 
         } catch (error) {
@@ -1151,8 +1609,11 @@ app.post(
             );
 
             return res.status(500).json({
+
                 success: false,
-                error: 'Unable to create admin session'
+
+                error:
+                    'Unable to create admin session'
             });
         }
     }
@@ -1168,23 +1629,43 @@ app.post(
     adminAuth,
     async (req, res) => {
 
-        const token =
-            req.headers['x-admin-token'];
+        try {
 
-        if (token) {
+            const token =
+                req.headers[
+                    'x-admin-token'
+                ];
 
-            await pool.query(
-                `
-                DELETE FROM admin_sessions
-                WHERE token_hash = $1
-                `,
-                [hashToken(token)]
+
+            if (token) {
+
+                await adminSessionsCollection
+                    .doc(
+                        hashToken(token)
+                    )
+                    .delete();
+            }
+
+
+            return res.json({
+                success: true
+            });
+
+        } catch (error) {
+
+            console.error(
+                'admin logout error:',
+                error
             );
-        }
 
-        res.json({
-            success: true
-        });
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    'Unable to logout'
+            });
+        }
     }
 );
 
@@ -1200,41 +1681,106 @@ app.get(
 
         try {
 
-            const result =
-                await pool.query(`
-                    SELECT
-                        COUNT(*)::int AS total,
+            const snapshot =
+                await keysCollection
+                    .get();
 
-                        COUNT(*) FILTER (
-                            WHERE expires_at > NOW()
-                            AND (
-                                login_limit = 0
-                                OR login_count < login_limit
-                            )
-                        )::int AS active,
 
-                        COUNT(*) FILTER (
-                            WHERE expires_at <= NOW()
-                        )::int AS expired,
+            let total = 0;
+            let active = 0;
+            let expired = 0;
+            let maxed = 0;
+            let standard = 0;
+            let custom = 0;
 
-                        COUNT(*) FILTER (
-                            WHERE expires_at > NOW()
-                            AND login_limit > 0
-                            AND login_count >= login_limit
-                        )::int AS maxed,
 
-                        COUNT(*) FILTER (
-                            WHERE type = 'standard'
-                        )::int AS standard,
+            const now =
+                Date.now();
 
-                        COUNT(*) FILTER (
-                            WHERE type = 'custom'
-                        )::int AS custom
 
-                    FROM keys
-                `);
+            snapshot.forEach(
+                document => {
 
-            res.json(result.rows[0]);
+                    total++;
+
+
+                    const data =
+                        document.data();
+
+
+                    const expiresAt =
+                        toDate(
+                            data.expires_at
+                        );
+
+
+                    const loginLimit =
+                        Number(
+                            data.login_limit ||
+                            0
+                        );
+
+
+                    const loginCount =
+                        Number(
+                            data.login_count ||
+                            0
+                        );
+
+
+                    if (
+                        expiresAt &&
+                        expiresAt.getTime() <=
+                        now
+                    ) {
+
+                        expired++;
+
+                    } else {
+
+                        active++;
+
+
+                        if (
+                            loginLimit > 0 &&
+                            loginCount >=
+                            loginLimit
+                        ) {
+
+                            maxed++;
+                        }
+                    }
+
+
+                    if (
+                        data.type ===
+                        'custom'
+                    ) {
+
+                        custom++;
+
+                    } else {
+
+                        standard++;
+                    }
+                }
+            );
+
+
+            return res.json({
+
+                total,
+
+                active,
+
+                expired,
+
+                maxed,
+
+                standard,
+
+                custom
+            });
 
         } catch (error) {
 
@@ -1243,8 +1789,10 @@ app.get(
                 error
             );
 
-            res.status(500).json({
-                error: 'Unable to load statistics'
+            return res.status(500).json({
+
+                error:
+                    'Unable to load statistics'
             });
         }
     }
@@ -1262,25 +1810,24 @@ app.get(
 
         try {
 
-            const result =
-                await pool.query(`
-                    SELECT
-                        id,
-                        key_value AS key,
-                        created_at AS "createdAt",
-                        expires_at AS "expiresAt",
-                        login_limit AS "loginLimit",
-                        login_count AS "loginCount",
-                        type,
-                        label,
-                        note,
-                        hwid,
-                        last_used_at AS "lastUsedAt"
-                    FROM keys
-                    ORDER BY created_at DESC
-                `);
+            const snapshot =
+                await keysCollection
+                    .orderBy(
+                        'created_at',
+                        'desc'
+                    )
+                    .get();
 
-            res.json(result.rows);
+
+            const keys =
+                snapshot.docs.map(
+                    serializeKey
+                );
+
+
+            return res.json(
+                keys
+            );
 
         } catch (error) {
 
@@ -1289,8 +1836,10 @@ app.get(
                 error
             );
 
-            res.status(500).json({
-                error: 'Unable to load keys'
+            return res.status(500).json({
+
+                error:
+                    'Unable to load keys'
             });
         }
     }
@@ -1315,24 +1864,31 @@ app.post(
             note
         } = req.body;
 
-        const client =
-            await pool.connect();
 
         try {
 
-            await client.query('BEGIN');
-
             let newKey;
+
 
             if (
                 customKey &&
-                String(customKey).trim()
+                String(
+                    customKey
+                ).trim()
             ) {
 
                 newKey =
-                    normalizeKey(customKey);
+                    normalizeKey(
+                        customKey
+                    );
 
-                if (!newKey.startsWith('SRT_')) {
+
+                if (
+                    !newKey.startsWith(
+                        'SRT_'
+                    )
+                ) {
+
                     newKey =
                         `SRT_${newKey}`;
                 }
@@ -1340,53 +1896,68 @@ app.post(
             } else {
 
                 newKey =
-                    await createUniqueKey(client);
+                    await createUniqueKey();
             }
 
 
-            const exists =
-                await client.query(
-                    `
-                    SELECT id
-                    FROM keys
-                    WHERE key_value = $1
-                    `,
-                    [newKey]
-                );
+            const keyRef =
+                keysCollection
+                    .doc(newKey);
 
-            if (exists.rowCount > 0) {
 
-                await client.query('ROLLBACK');
+            const existing =
+                await keyRef.get();
+
+
+            if (
+                existing.exists
+            ) {
 
                 return res.status(400).json({
-                    error: 'Key already exists'
+
+                    error:
+                        'Key already exists'
                 });
             }
 
 
             let expiryDate;
 
-            if (customExpiry) {
 
-                if (!isValidDate(customExpiry)) {
+            if (
+                customExpiry
+            ) {
 
-                    await client.query('ROLLBACK');
+                if (
+                    !isValidDate(
+                        customExpiry
+                    )
+                ) {
 
                     return res.status(400).json({
-                        error: 'Invalid expiry date'
+
+                        error:
+                            'Invalid expiry date'
                     });
                 }
 
+
                 expiryDate =
-                    new Date(customExpiry);
+                    new Date(
+                        customExpiry
+                    );
 
             } else {
 
                 const durationDays =
                     Math.max(
                         1,
-                        parseInt(duration, 10) || 7
+                        parseInt(
+                            duration,
+                            10
+                        ) || 7
                     );
+
 
                 expiryDate =
                     new Date(
@@ -1403,70 +1974,74 @@ app.post(
             const limit =
                 Math.max(
                     0,
-                    parseInt(loginLimit, 10) || 1
+                    parseInt(
+                        loginLimit,
+                        10
+                    ) || 1
                 );
 
 
-            const result =
-                await client.query(
-                    `
-                    INSERT INTO keys
-                    (
-                        key_value,
-                        created_at,
-                        expires_at,
-                        login_limit,
-                        login_count,
-                        type,
-                        label,
-                        note,
-                        hwid
-                    )
-                    VALUES
-                    (
-                        $1,
-                        NOW(),
-                        $2,
-                        $3,
-                        0,
-                        'custom',
-                        $4,
-                        $5,
-                        NULL
-                    )
-                    RETURNING
-                        id,
-                        key_value AS key,
-                        created_at AS "createdAt",
-                        expires_at AS "expiresAt",
-                        login_limit AS "loginLimit",
-                        login_count AS "loginCount",
-                        type,
-                        label,
-                        note,
-                        hwid
-                    `,
-                    [
-                        newKey,
-                        expiryDate,
-                        limit,
-                        label || '',
+            const createdAt =
+                new Date();
+
+
+            await keyRef.set({
+
+                key_value:
+                    newKey,
+
+                created_at:
+                    Timestamp.fromDate(
+                        createdAt
+                    ),
+
+                expires_at:
+                    Timestamp.fromDate(
+                        expiryDate
+                    ),
+
+                login_limit:
+                    limit,
+
+                login_count:
+                    0,
+
+                type:
+                    'custom',
+
+                label:
+                    String(
+                        label || ''
+                    ),
+
+                note:
+                    String(
                         note || ''
-                    ]
-                );
+                    ),
+
+                hwid:
+                    null,
+
+                last_used_at:
+                    null
+            });
 
 
-            await client.query('COMMIT');
+            const saved =
+                await keyRef.get();
 
 
             return res.json({
+
                 success: true,
-                key: result.rows[0]
+
+                key:
+                    serializeKey(
+                        saved
+                    )
             });
 
         } catch (error) {
-
-            await client.query('ROLLBACK');
 
             console.error(
                 'create-key error:',
@@ -1474,12 +2049,10 @@ app.post(
             );
 
             return res.status(500).json({
-                error: 'Unable to create key'
+
+                error:
+                    'Unable to create key'
             });
-
-        } finally {
-
-            client.release();
         }
     }
 );
@@ -1495,7 +2068,10 @@ app.patch(
     async (req, res) => {
 
         const keyName =
-            normalizeKey(req.params.key);
+            normalizeKey(
+                req.params.key
+            );
+
 
         const {
             expiresAt,
@@ -1506,156 +2082,150 @@ app.patch(
             hwid
         } = req.body;
 
+
         try {
 
-            const existing =
-                await pool.query(
-                    `
-                    SELECT *
-                    FROM keys
-                    WHERE key_value = $1
-                    `,
-                    [keyName]
-                );
+            const keyRef =
+                keysCollection
+                    .doc(keyName);
 
-            if (existing.rowCount === 0) {
+
+            const existing =
+                await keyRef.get();
+
+
+            if (
+                !existing.exists
+            ) {
 
                 return res.status(404).json({
-                    error: 'Key not found'
+
+                    error:
+                        'Key not found'
                 });
             }
 
 
-            const fields = [];
-            const values = [];
-
-            let index = 1;
+            const updates = {};
 
 
-            if (expiresAt !== undefined) {
+            if (
+                expiresAt !== undefined
+            ) {
 
-                if (!isValidDate(expiresAt)) {
+                if (
+                    !isValidDate(
+                        expiresAt
+                    )
+                ) {
 
                     return res.status(400).json({
-                        error: 'Invalid expiry date'
+
+                        error:
+                            'Invalid expiry date'
                     });
                 }
 
-                fields.push(
-                    `expires_at = $${index++}`
-                );
 
-                values.push(
-                    new Date(expiresAt)
-                );
+                updates.expires_at =
+                    Timestamp.fromDate(
+                        new Date(
+                            expiresAt
+                        )
+                    );
             }
 
 
-            if (loginLimit !== undefined) {
+            if (
+                loginLimit !== undefined
+            ) {
 
-                const value =
+                updates.login_limit =
                     Math.max(
                         0,
-                        parseInt(loginLimit, 10)
+                        parseInt(
+                            loginLimit,
+                            10
+                        ) || 0
                     );
-
-                fields.push(
-                    `login_limit = $${index++}`
-                );
-
-                values.push(value);
             }
 
 
-            if (loginCount !== undefined) {
+            if (
+                loginCount !== undefined
+            ) {
 
-                const value =
+                updates.login_count =
                     Math.max(
                         0,
-                        parseInt(loginCount, 10)
+                        parseInt(
+                            loginCount,
+                            10
+                        ) || 0
                     );
-
-                fields.push(
-                    `login_count = $${index++}`
-                );
-
-                values.push(value);
             }
 
 
-            if (label !== undefined) {
+            if (
+                label !== undefined
+            ) {
 
-                fields.push(
-                    `label = $${index++}`
-                );
-
-                values.push(
-                    String(label)
-                );
+                updates.label =
+                    String(label);
             }
 
 
-            if (note !== undefined) {
+            if (
+                note !== undefined
+            ) {
 
-                fields.push(
-                    `note = $${index++}`
-                );
-
-                values.push(
-                    String(note)
-                );
+                updates.note =
+                    String(note);
             }
 
 
-            if (hwid !== undefined) {
+            if (
+                hwid !== undefined
+            ) {
 
-                fields.push(
-                    `hwid = $${index++}`
-                );
-
-                values.push(
-                    hwid ? String(hwid) : null
-                );
+                updates.hwid =
+                    hwid
+                        ? String(hwid)
+                        : null;
             }
 
 
-            if (fields.length === 0) {
+            if (
+                Object.keys(
+                    updates
+                ).length === 0
+            ) {
 
                 return res.status(400).json({
-                    error: 'No fields to update'
+
+                    error:
+                        'No fields to update'
                 });
             }
 
 
-            values.push(keyName);
+            await keyRef.update(
+                updates
+            );
 
 
-            const result =
-                await pool.query(
-                    `
-                    UPDATE keys
-                    SET ${fields.join(', ')}
-                    WHERE key_value = $${index}
-                    RETURNING
-                        id,
-                        key_value AS key,
-                        created_at AS "createdAt",
-                        expires_at AS "expiresAt",
-                        login_limit AS "loginLimit",
-                        login_count AS "loginCount",
-                        type,
-                        label,
-                        note,
-                        hwid,
-                        last_used_at AS "lastUsedAt"
-                    `,
-                    values
-                );
+            const updated =
+                await keyRef.get();
 
 
             return res.json({
+
                 success: true,
-                key: result.rows[0]
+
+                key:
+                    serializeKey(
+                        updated
+                    )
             });
 
         } catch (error) {
@@ -1666,7 +2236,9 @@ app.patch(
             );
 
             return res.status(500).json({
-                error: 'Unable to update key'
+
+                error:
+                    'Unable to update key'
             });
         }
     }
@@ -1683,28 +2255,39 @@ app.delete(
     async (req, res) => {
 
         const keyName =
-            normalizeKey(req.params.key);
+            normalizeKey(
+                req.params.key
+            );
+
 
         try {
 
-            const result =
-                await pool.query(
-                    `
-                    DELETE FROM keys
-                    WHERE key_value = $1
-                    RETURNING key_value
-                    `,
-                    [keyName]
-                );
+            const keyRef =
+                keysCollection
+                    .doc(keyName);
 
-            if (result.rowCount === 0) {
+
+            const existing =
+                await keyRef.get();
+
+
+            if (
+                !existing.exists
+            ) {
 
                 return res.status(404).json({
-                    error: 'Key not found'
+
+                    error:
+                        'Key not found'
                 });
             }
 
-            res.json({
+
+            await keyRef.delete();
+
+
+            return res.json({
+
                 success: true
             });
 
@@ -1715,8 +2298,10 @@ app.delete(
                 error
             );
 
-            res.status(500).json({
-                error: 'Unable to delete key'
+            return res.status(500).json({
+
+                error:
+                    'Unable to delete key'
             });
         }
     }
@@ -1724,36 +2309,50 @@ app.delete(
 
 
 /* =========================================================
-   404 API HANDLER
+   API 404
 ========================================================= */
 
-app.use('/api', (req, res) => {
+app.use(
+    '/api',
+    (req, res) => {
 
-    res.status(404).json({
-        error: 'API endpoint not found'
-    });
-});
+        res.status(404).json({
+
+            error:
+                'API endpoint not found'
+        });
+    }
+);
 
 
 /* =========================================================
    ERROR HANDLER
 ========================================================= */
 
-app.use((error, req, res, next) => {
+app.use(
+    (error, req, res, next) => {
 
-    console.error(
-        'Unhandled server error:',
-        error
-    );
+        console.error(
+            'Unhandled server error:',
+            error
+        );
 
-    if (res.headersSent) {
-        return next(error);
+
+        if (
+            res.headersSent
+        ) {
+
+            return next(error);
+        }
+
+
+        res.status(500).json({
+
+            error:
+                'Internal server error'
+        });
     }
-
-    res.status(500).json({
-        error: 'Internal server error'
-    });
-});
+);
 
 
 /* =========================================================
@@ -1764,7 +2363,15 @@ async function start() {
 
     try {
 
-        await initializeDatabase();
+        /*
+         * Test Firebase connection.
+         */
+
+        await db
+            .collection('_health')
+            .doc('status')
+            .get();
+
 
         app.listen(
             PORT,
@@ -1775,30 +2382,43 @@ async function start() {
                 console.log(
                     '======================================'
                 );
+
                 console.log(
-                    '       SRT X CHEATS KEY SYSTEM'
+                    '      SRT X CHEATS FIREBASE API'
                 );
+
                 console.log(
                     '======================================'
                 );
+
                 console.log(
                     `PORT: ${PORT}`
                 );
+
                 console.log(
                     `SITE_URL: ${SITE_URL}`
                 );
+
                 console.log(
                     `CALLBACK_BASE_URL: ${CALLBACK_BASE_URL}`
                 );
+
                 console.log(
-                    'DATABASE: PostgreSQL'
+                    `FIREBASE PROJECT: ${serviceAccount.project_id}`
                 );
+
                 console.log(
-                    'ADMIN PASSWORD: configured'
+                    'DATABASE: FIRESTORE'
                 );
+
+                console.log(
+                    'ADMIN AUTH: SESSION TOKEN'
+                );
+
                 console.log(
                     '======================================'
                 );
+
                 console.log('');
             }
         );
@@ -1806,7 +2426,7 @@ async function start() {
     } catch (error) {
 
         console.error(
-            'Unable to start server:',
+            'Firebase initialization failed:',
             error
         );
 
@@ -1815,29 +2435,30 @@ async function start() {
 }
 
 
+/* =========================================================
+   SHUTDOWN
+========================================================= */
+
 process.on(
     'SIGTERM',
     async () => {
 
         console.log(
-            'SIGTERM received. Closing database...'
+            'SIGTERM received.'
         );
-
-        await pool.end();
 
         process.exit(0);
     }
 );
+
 
 process.on(
     'SIGINT',
     async () => {
 
         console.log(
-            'SIGINT received. Closing database...'
+            'SIGINT received.'
         );
-
-        await pool.end();
 
         process.exit(0);
     }
