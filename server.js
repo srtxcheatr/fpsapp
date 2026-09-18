@@ -65,7 +65,6 @@ app.post('/api/init-key-request', async (req, res) => {
 
         // 3. Construct your Ad Network URL
         // ⚠️ REPLACE 'https://your-ad-network.com/ad' WITH YOUR ACTUAL AD URL
-        // The ad network MUST redirect back to your Render callback URL with the session ID.
         const callbackUrl = `https://fpsapp.onrender.com/api/ad-callback?session=${sessionId}`;
         const adUrl = `https://your-ad-network.com/ad?callback=${encodeURIComponent(callbackUrl)}`;
         
@@ -159,7 +158,6 @@ app.get('/api/ad-callback', async (req, res) => {
         console.log(`[CALLBACK SUCCESS] Generated key ${generatedKey} for session ${sessionId}`);
         
         // 6. Redirect back to your frontend
-        // We redirect back to cheats.xo.je with the session ID so the frontend can fetch the key
         res.redirect(`https://cheats.xo.je/?session=${sessionId}&status=success`);
 
     } catch (error) {
