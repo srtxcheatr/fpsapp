@@ -9,11 +9,18 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ====================================================
-//  CONFIG
+//  CONFIG (Loaded from Environment Variables)
 // ====================================================
-const ADMIN_PASSWORD = process.env.ADMIN_PASS || 'SRTxAdmin@2026';
-const SITE_URL = process.env.SITE_URL || `https://fpsapp.onrender.com`; // Updated to your Render URL
-const URLKING_API = 'b6549d25fbfdc3085eb0aadcc2a3d45a7f7c4008';
+const ADMIN_PASSWORD = process.env.ADMIN_PASS;
+const URLKING_API = process.env.URLKING_API;
+const SITE_URL = process.env.SITE_URL || `https://fpsapp.onrender.com`; // Backend URL
+const FRONTEND_URL = process.env.FRONTEND_URL || `https://cheats.xo.je`; // Frontend URL
+
+// Safety check to ensure critical variables are set
+if (!ADMIN_PASSWORD || !URLKING_API) {
+    console.error("❌ CRITICAL ERROR: ADMIN_PASS or URLKING_API is missing from environment variables.");
+    process.exit(1);
+}
 
 // ====================================================
 //  FIREBASE SETUP
@@ -40,7 +47,7 @@ const db = admin.firestore();
 // ====================================================
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
-app.use(cors()); // Simplified CORS
+app.use(cors()); 
 
 // ====================================================
 //  KEY GENERATOR
@@ -82,10 +89,10 @@ app.post('/api/init-key-request', async (req, res) => {
             key: null
         });
 
+        // The callback MUST go to the backend (SITE_URL)
         const callbackUrl = encodeURIComponent(`${SITE_URL}/api/ad-callback?session=${sessionId}`);
         const redirectUrl = `https://go.urlking.in/st?api=${URLKING_API}&url=${callbackUrl}`;
 
-        // Return EXACTLY the same format your frontend expects
         res.json({ sessionId, redirectUrl });
     } catch (error) {
         console.error("Init Error:", error);
@@ -96,19 +103,21 @@ app.post('/api/init-key-request', async (req, res) => {
 // Step 2: URL King redirects here after ads
 app.get('/api/ad-callback', async (req, res) => {
     const { session } = req.query;
-    if (!session) return res.redirect('/?error=no_session');
+    
+    // Redirect errors to the FRONTEND
+    if (!session) return res.redirect(`${FRONTEND_URL}/?error=no_session`);
 
     try {
         const sessionRef = db.collection('sessions').doc(session);
         const sessionDoc = await sessionRef.get();
 
-        if (!sessionDoc.exists) return res.redirect('/?error=invalid_session');
+        if (!sessionDoc.exists) return res.redirect(`${FRONTEND_URL}/?error=invalid_session`);
         
         const sess = sessionDoc.data();
 
         // Already completed → return the same key
         if (sess.completed) {
-            return res.redirect(`/?key=${sess.key}&session=${session}&already=1`);
+            return res.redirect(`${FRONTEND_URL}/?key=${sess.key}&session=${session}&already=1`);
         }
 
         // Generate key
@@ -136,10 +145,11 @@ app.get('/api/ad-callback', async (req, res) => {
             completedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        res.redirect(`/?key=${newKey}&session=${session}`);
+        // Success! Redirect user back to the FRONTEND with the key
+        res.redirect(`${FRONTEND_URL}/?key=${newKey}&session=${session}`);
     } catch (error) {
         console.error("Callback Error:", error);
-        res.redirect('/?error=server_error');
+        res.redirect(`${FRONTEND_URL}/?error=server_error`);
     }
 });
 
