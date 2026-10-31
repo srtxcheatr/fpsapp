@@ -169,3 +169,26 @@ Generated keys may now use 6–32 random characters (default 8); `/api/verify-ke
 1. Set a long random `ADMIN_PASS` and keep `FIREBASE_SERVICE_ACCOUNT_KEY` only in Render's environment.
 2. If Firestore is unreachable the key endpoints return **503** (never `valid:false`), so the Android app keeps its stored license and treats it as offline instead of wiping it.
 3. URL King's `/st` redirect gives no cryptographic proof of ad completion — the callback trusts the redirect.
+
+
+---
+
+## 📲 App control (v4.2): server-driven app, 2-step key check
+
+The Android app ships **without** its logo, menu names, macro button images, sounds, get-key link or feature list.
+It downloads them from this server in two steps. Admin panel → **App control**.
+
+| Step | When | What is sent | Who can get it |
+|---|---|---|---|
+| 1 "Downloading necessary files" | first open | login page text, get-key URL, login logo, wrong-key sound | anyone with a real APK (no key) |
+| 2 "Downloading necessary files" | after the key is accepted | overlay name/title, app logo, overlay logo, macro E/G images, sensi-zone icon, success/fail/restore sounds, feature on/off | only a valid key **on the same device**, checked in the database again |
+
+Answers the app can get: `KEY_NOT_FOUND`, `KEY_INVALID` (revoked / expired / other device), `APK_MODDED`, `TOKEN_EXPIRED`, `GATE` (HTTP 423).
+
+* **Patch / maintenance** (admin → Message / patch / maintenance): `patch` shows title + message + [Open] [Close app]; `maintenance` shows "Please wait – timer" + [Close app] and ends by itself. Both are enforced on **every** app endpoint, so a bypassed UI still gets nothing. `minVersionCode` forces old builds onto the patch screen.
+* **APK check**: paste the SHA-256 of your signing certificate (`keytool -list -v -keystore my-upload-key.jks`, line "SHA256"), tick *Enforce*. Apps signed with any other key get `APK_MODDED` and no files. Turn it on **after** you have checked your release build works (a debug-signed build has a different hash).
+* **Files**: webp / png / jpg ≤ 700 KB, mp3 / ogg ≤ 700 KB. Type is detected from the bytes, not the file name.
+
+Endpoints: `GET /api/app/boot`, `POST /api/app/login`, `GET /api/app/stage2`, `GET /api/app/asset/:slot` · admin: `GET /api/admin/app/config`, `PUT /api/admin/app/config/:section`, `POST /api/admin/app/assets`, `DELETE /api/admin/app/assets/:slot`.
+
+**Honest limit:** the macro / touch code still runs inside the APK, so a determined cracker can still read it. What this removes is everything cosmetic and everything that makes the app look like yours: without a valid key on a real signed APK there is no logo, no menu, no names, no sounds, no link to swap.
