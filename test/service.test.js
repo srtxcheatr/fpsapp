@@ -25,7 +25,7 @@ test('generateKey: requested length, safe charset, matches server regex', () => 
     assert.equal(new Set(Array.from({ length: 500 }, () => L.generateKey('SRT', 10))).size, 500);
 });
 test('parseCustomKey: prefix handling and rejection', () => {
-    assert.deepEqual(L.parseCustomKey('vip2026', 'site2'), { key: 'SAMUEL_VIP2026', prefix: 'SAMUEL', siteId: 'site2' });
+    assert.deepEqual(L.parseCustomKey('vip2026', 'site2'), { key: 'SENSI_VIP2026', prefix: 'SENSI', siteId: 'site2' });
     assert.equal(L.parseCustomKey('nk_hello1', 'site1').key, 'NK_HELLO1');
     for (const bad of ['ab', 'has space', 'x'.repeat(33), 'a/b', 'SRT_a-b', '']) assert.throws(() => L.parseCustomKey(bad, 'site1'), /4–32|Custom/);
 });
@@ -245,7 +245,7 @@ test('logger: masks keys, redacts secret-looking fields, no stack/query leakage'
     const lines = []; const sink = { log: l => lines.push(l), warn: l => lines.push(l), error: l => lines.push(l) };
     const log = L.makeLogger(sink);
     log.info('verify SRT_ABCD2345 failed', { password: 'hunter2', hwid: 'DEVICE123', token: 'abc', nested: { authorization: 'Bearer x', note: 'ok NK_ZZZZ9999' } });
-    log.err('boom', Object.assign(new Error('bad key SAMUEL_QQQQ2222'), { code: 14 }));
+    log.err('boom', Object.assign(new Error('bad key SENSI_QQQQ2222'), { code: 14 }));
     const all = lines.join('\n');
     for (const secret of ['ABCD2345', 'hunter2', 'DEVICE123', 'Bearer x', 'ZZZZ9999', 'QQQQ2222']) assert.ok(!all.includes(secret), `leaked ${secret}`);
     assert.ok(all.includes('SRT_AB****') && all.includes('[redacted]'));

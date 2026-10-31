@@ -125,7 +125,7 @@ test('bulk API: generate, search/filter, bulk revoke, delete needs confirm, audi
         const { cookie, csrf } = await t.login();
         const gen = await t.call('POST', '/api/admin/create-key', { cookie, csrf, body: { count: 12, length: 10, siteId: 'site2', label: 'promo' } });
         const keys = gen.json.keys.map(k => k.key);
-        assert.equal(keys.length, 12); assert.ok(keys.every(k => k.startsWith('SAMUEL_') && k.length === 7 + 10));
+        assert.equal(keys.length, 12); assert.ok(keys.every(k => k.startsWith('SENSI_') && k.length === 7 + 10));
         const search = await t.call('GET', '/api/admin/keys/search?search=promo&status=active&limit=5', { cookie });
         assert.equal(search.json.total, 12); assert.equal(search.json.items.length, 5);
         const rev = await t.call('POST', '/api/admin/keys/bulk', { cookie, csrf, body: { action: 'revoke', keys: keys.slice(0, 8), reason: 'bulk' } });
