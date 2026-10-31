@@ -8,6 +8,7 @@ const helmet    = require('helmet');
 const cors      = require('cors');
 const L         = require('./lib');
 const S         = require('./service');
+const { mountAppRoutes } = require('./appRoutes');
 const { HttpError, SITE_PREFIXES, KEY_RE } = L;
 
 /**
@@ -59,7 +60,8 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
         maxAge: 86400,
     }));
 
-    app.use(express.json({ limit: config.MAX_PAYLOAD }));
+    const jsonSmall = express.json({ limit: config.MAX_PAYLOAD });
+    app.use((req, res, next) => (req.method === 'POST' && req.path === '/api/admin/app/assets') ? next() : jsonSmall(req, res, next));   // upload route has its own 1.1 MB parser
     app.use(express.urlencoded({ extended: false, limit: config.MAX_PAYLOAD }));
     app.use((req, res, next) => { req.setTimeout(15000, () => { if (!res.headersSent) res.status(408).json({ error: 'Request timeout' }); }); next(); });
 
@@ -86,7 +88,7 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
     });
 
     // ── Global limiter + slow-down (admin has its own limiter below) ──
-    const notAdmin = req => req.path.startsWith('/api/admin') || req.path.startsWith('/admin');
+    const notAdmin = req => req.path.startsWith('/api/admin') || req.path.startsWith('/admin') || req.path.startsWith('/api/app');   // /api/app has its own limiters
     app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 150, skip: notAdmin, standardHeaders: true, legacyHeaders: false,
         handler: (req, res) => { recordFail(req.ip); res.status(429).json({ error: 'Too many requests. Slow down.' }); } }));
     app.use(slowDown({ windowMs: 5 * 60 * 1000, delayAfter: 60, delayMs: used => (used - 60) * 50, maxDelayMs: 5000, skip: notAdmin }));
@@ -354,6 +356,9 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
         await audit(req, 'ban.remove', { details: { ip: req.params.ip } });
         res.json({ success: true, message: `${req.params.ip} unbanned` });
     }));
+
+    // ═════════════════ APP CONTROL (server-driven UI, assets, gate) ═════════════════
+    mountAppRoutes(app, { needDb, safe, adminAuth, audit, recordFail, config });
 
     // ═════════════════ ADMIN PANEL (static) ═════════════════
     app.get('/admin', (req, res) => res.redirect(301, '/admin/'));

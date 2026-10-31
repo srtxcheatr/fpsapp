@@ -2,11 +2,11 @@
 const crypto = require('crypto');
 
 // ── Constants ────────────────────────────────────────────────────
-const SITE_PREFIXES = { site1: 'SRT', site2: 'SAMUEL', site3: 'KALEYYY', site4: 'NK' };
+const SITE_PREFIXES = { site1: 'SRT', site2: 'SENSI', site3: 'KALEYYY', site4: 'NK' };
 const PREFIX_TO_SITE = Object.fromEntries(Object.entries(SITE_PREFIXES).map(([s, p]) => [p, s]));
 const KEY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 // Suffix 4–32 chars (was fixed 8). Superset of the old format, so every existing key still verifies.
-const KEY_RE = /^(SRT|SAMUEL|KALEYYY|NK)_[A-Z0-9]{4,32}$/;
+const KEY_RE = /^(SRT|SENSI|KALEYYY|NK)_[A-Z0-9]{4,32}$/;
 const DAY = 86400000;
 
 class HttpError extends Error {
@@ -16,7 +16,7 @@ class HttpError extends Error {
 // ── Safe logger ──────────────────────────────────────────────────
 // Never prints secrets, key values, HWIDs or query strings.
 const SECRET_FIELD = /pass|token|secret|authorization|cookie|private|credential|hwid|csrf/i;
-const KEY_IN_TEXT  = /\b(SRT|SAMUEL|KALEYYY|NK)_([A-Z0-9]{2})[A-Z0-9]{2,30}\b/g;
+const KEY_IN_TEXT  = /\b(SRT|SENSI|KALEYYY|NK)_([A-Z0-9]{2})[A-Z0-9]{2,30}\b/g;
 
 function maskKey(k) {
     return String(k).replace(KEY_IN_TEXT, (_m, p, head) => `${p}_${head}****`);
@@ -61,7 +61,7 @@ function intIn(v, def, min, max, name) {
 // Accepts "SRT_ABCD1234" or just "ABCD1234" (site prefix is added).
 function parseCustomKey(input, siteId) {
     let k = String(input).trim().toUpperCase();
-    const m = k.match(/^(SRT|SAMUEL|KALEYYY|NK)_(.*)$/);
+    const m = k.match(/^(SRT|SENSI|KALEYYY|NK)_(.*)$/);
     let prefix = SITE_PREFIXES[siteId];
     let sid = siteId;
     if (m) { prefix = m[1]; sid = PREFIX_TO_SITE[prefix]; k = m[2]; }
