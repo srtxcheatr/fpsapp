@@ -1,0 +1,16 @@
+# Optional Render Blueprint: New → Blueprint → pick your repo. Secrets are entered in the dashboard (render.env → "Add from .env").
+services:
+  - type: web
+    name: srtx-key-server
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - { key: ADMIN_PASS, sync: false }
+      - { key: SITE_URL, sync: false }
+      - { key: WORKER_SECRET, sync: false }
+      - { key: FIREBASE_SERVICE_ACCOUNT_KEY, sync: false }
+      - { key: AUTO_REBIND_MAX, value: "5" }
+      - { key: TRUST_PROXY, value: "1" }

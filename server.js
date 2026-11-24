@@ -23,6 +23,8 @@ const config = {
     PORT: parseInt(env.PORT) || 3000,
     ADMIN_PASS: env.ADMIN_PASS,
     SESSION_SECRET: env.SESSION_SECRET || '',
+    AUTO_REBIND_MAX: env.AUTO_REBIND_MAX === undefined ? 5 : Math.max(0, parseInt(env.AUTO_REBIND_MAX) || 0),   // same-phone HWID auto-rebinds per key (0 = off)
+    WORKER_SECRET: env.WORKER_SECRET || '',                          // shared with the 5 Cloudflare Workers (>= 32 chars)
     URLKING_API: env.URLKING_API || '',
     SITE_URL: env.SITE_URL.replace(/\/+$/, ''),
     FRONTEND_URL: (env.FRONTEND_URL || env.SITE_URL).replace(/\/+$/, ''),
@@ -32,6 +34,7 @@ const config = {
     ALLOW_QUERY_TOKEN: env.ALLOW_QUERY_TOKEN === '1',                // legacy ?token=… (off: it leaks into logs)
     DISABLE_LEGACY_TOKEN: env.DISABLE_LEGACY_TOKEN === '1',          // refuse raw ADMIN_PASS in X-Admin-Token
 };
+if (config.WORKER_SECRET.length < 32) log.warn('WORKER_SECRET missing/short (<32) — /api/internal/guard/* is disabled until set');
 if (!config.URLKING_API) log.warn('URLKING_API not set — /api/init-key-request is disabled');
 
 // ── Firebase (failure-safe) ──────────────────────────────────────

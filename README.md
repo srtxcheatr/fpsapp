@@ -192,3 +192,7 @@ Answers the app can get: `KEY_NOT_FOUND`, `KEY_INVALID` (revoked / expired / oth
 Endpoints: `GET /api/app/boot`, `POST /api/app/login`, `GET /api/app/stage2`, `GET /api/app/asset/:slot` · admin: `GET /api/admin/app/config`, `PUT /api/admin/app/config/:section`, `POST /api/admin/app/assets`, `DELETE /api/admin/app/assets/:slot`.
 
 **Honest limit:** the macro / touch code still runs inside the APK, so a determined cracker can still read it. What this removes is everything cosmetic and everything that makes the app look like yours: without a valid key on a real signed APK there is no logo, no menu, no names, no sounds, no link to swap.
+
+
+## 🛡️ v4.3 Worker Guard
+5 Cloudflare Workers (`workers/`) sit in front of `/api/internal/guard/*` (HMAC `WORKER_SECRET`) and return RSA-signed verdicts to the app. Full guide + Google AI Studio prompt: **howtouse.md**. Local test: `node workers/test-workers.mjs`.

@@ -1,14 +1,17 @@
 {
   "name": "srtx-secure-key-server",
-  "version": "4.0.0",
-  "description": "SRT X CHEATS — Hardened Key System Server (Render-ready)",
+  "version": "4.5.0",
+  "description": "SRT X CHEATS \u2014 Hardened Key System Server (Render-ready)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
     "pm2": "pm2 start ecosystem.config.js",
     "test": "node --test test/*.test.js",
-    "migrate": "node scripts/migrate-v4.js"
+    "migrate": "node scripts/migrate-v4.js",
+    "test:workers": "node workers/test-workers.mjs",
+    "gen-keys": "node scripts/gen-keys.js",
+    "make-env": "node scripts/make-env.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
