@@ -1,0 +1,13 @@
+# Only needed if you deploy with the CLI (`npx wrangler deploy`). On a phone, paste worker.js in the Cloudflare dashboard instead.
+name = "srtx-edge"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[triggers]
+crons = ["*/10 * * * *"]
+
+# Nothing secret belongs in this file. Set these as SECRETS (dashboard: Settings → Variables and Secrets → Secret):
+#   ORIGIN_URL     your Render URL
+#   ORIGIN_SECRET  32+ random chars (same as Render)
+# CLI:  npx wrangler secret put ORIGIN_URL   ·   npx wrangler secret put ORIGIN_SECRET
+# Optional plain variable:  APP_UA_PREFIX = "SRTX/"
