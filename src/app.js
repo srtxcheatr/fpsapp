@@ -1,6 +1,7 @@
 'use strict';
 const path      = require('path');
 const crypto    = require('crypto');
+const net       = require('net');
 const express   = require('express');
 const rateLimit = require('express-rate-limit');
 const slowDown  = require('express-slow-down');
@@ -9,7 +10,6 @@ const cors      = require('cors');
 const L         = require('./lib');
 const S         = require('./service');
 const { mountAppRoutes } = require('./appRoutes');
-const { mountGuardRoutes } = require('./guardRoutes');
 const { HttpError, SITE_PREFIXES, KEY_RE } = L;
 
 /**
@@ -40,6 +40,26 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
     app.set('trust proxy', config.TRUST_PROXY);   // Render = 1 proxy hop
     app.disable('x-powered-by');
 
+    // ── Origin lock (Cloudflare Worker in front) ────────────────
+    // With ORIGIN_SECRET set, /api/app/* only answers requests that carry the Worker's secret header; direct hits get a plain 404.
+    // Requests from the Worker also carry the real client IP (X-Client-IP), which replaces req.ip so bans / rate limits hit the
+    // user, not Cloudflare. The secret is compared in constant time and is never logged.
+    const originSecret = config.ORIGIN_SECRET ? Buffer.from(String(config.ORIGIN_SECRET)) : null;
+    const fromWorker = req => {
+        if (!originSecret) return false;
+        const got = Buffer.from(String(req.headers['x-origin-secret'] || ''));
+        return got.length === originSecret.length && crypto.timingSafeEqual(got, originSecret);
+    };
+    app.use((req, res, next) => {
+        if (fromWorker(req)) {
+            const ip = String(req.headers['x-client-ip'] || '').trim();
+            if (net.isIP(ip)) Object.defineProperty(req, 'ip', { value: ip, configurable: true });
+        } else if (originSecret && req.path.startsWith('/api/app')) {
+            return res.status(404).json({ error: 'Not found' });
+        }
+        next();
+    });
+
     // ── Secure headers ──────────────────────────────────────────
     // Strict CSP: the only HTML we serve is /admin, and it uses external same-origin JS/CSS (no inline code).
     app.use(helmet({
@@ -61,7 +81,7 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
         maxAge: 86400,
     }));
 
-    const jsonSmall = express.json({ limit: config.MAX_PAYLOAD });
+    const jsonSmall = express.json({ limit: config.MAX_PAYLOAD, verify: (req, _res, buf) => { req.rawBody = buf; } });   // rawBody = exact bytes the app signed
     app.use((req, res, next) => (req.method === 'POST' && req.path === '/api/admin/app/assets') ? next() : jsonSmall(req, res, next));   // upload route has its own 1.1 MB parser
     app.use(express.urlencoded({ extended: false, limit: config.MAX_PAYLOAD }));
     app.use((req, res, next) => { req.setTimeout(15000, () => { if (!res.headersSent) res.status(408).json({ error: 'Request timeout' }); }); next(); });
@@ -165,9 +185,7 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
         handler: (req, res) => res.status(429).json({ valid: false, message: 'Too many checks. Wait 5 minutes.' }) });
 
     app.get('/api/verify-key', verifyLimiter, needDb, safe(async (req, res) => {
-        let device = null;                                   // legacy GET: optional ?dev=<base64url JSON> (≤ 1 KB)
-        try { const d = String(req.query.dev || ''); if (d && d.length <= 1400) device = JSON.parse(Buffer.from(d, 'base64url').toString()); } catch { /* ignore */ }
-        const r = await S.verifyKey(req.db, req.query.key, req.query.hwid, Date.now(), { device, rebindMax: config.AUTO_REBIND_MAX });
+        const r = await S.verifyKey(req.db, req.query.key, req.query.hwid);
         if (r.fail) recordFail(req.ip);
         res.json(r.body);
     }));
@@ -361,8 +379,7 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
     }));
 
     // ═════════════════ APP CONTROL (server-driven UI, assets, gate) ═════════════════
-    mountAppRoutes(app, { needDb, safe, adminAuth, audit, recordFail, config });
-    const guardAuth = mountGuardRoutes(app, { needDb, safe, adminAuth, recordFail, config });
+    mountAppRoutes(app, { needDb, safe, adminAuth, audit, recordFail, config, log });
 
     // ═════════════════ ADMIN PANEL (static) ═════════════════
     app.get('/admin', (req, res) => res.redirect(301, '/admin/'));
@@ -377,7 +394,7 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
         res.status(status).json({ error: status === 500 ? 'Server error' : (err instanceof HttpError ? err.message : 'Bad request') });
     });
 
-    app.locals.cleanup = () => { clearInterval(sweep); guardAuth.cleanup(); };
+    app.locals.cleanup = () => clearInterval(sweep);
     return app;
 }
 

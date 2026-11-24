@@ -1,7 +1,6 @@
 'use strict';
 const L = require('./lib');
 const { HttpError, DAY, KEY_RE, SITE_PREFIXES } = L;
-const D = require('./device');
 
 const BULK_MAX = 500;
 const ALREADY_EXISTS = e => e && (e.code === 6 || /ALREADY_EXISTS/i.test(e.message || ''));
@@ -13,8 +12,7 @@ const keysCol = db => db.collection('keys');
 // revoked/deleted can never be "refreshed" by a concurrent login, and login limits can't race.
 // "Key revoked" deliberately avoids the words expired/hwid/device/limit, so the app's classify()
 // maps it to REVOKED (login screen, session wiped).
-async function verifyKey(db, rawKey, rawHwid, nowMs = Date.now(), opts = {}) {
-    const device = D.sanitizeDevice(opts.device), rebindMax = Number.isInteger(opts.rebindMax) ? opts.rebindMax : 5;
+async function verifyKey(db, rawKey, rawHwid, nowMs = Date.now()) {
     const key = normKey(rawKey);
     const hwid = String(rawHwid || '').trim().slice(0, 128);
     if (!KEY_RE.test(key)) return { body: { valid: false, message: 'Invalid key format' }, fail: true };
@@ -35,18 +33,9 @@ async function verifyKey(db, rawKey, rawHwid, nowMs = Date.now(), opts = {}) {
         if (expiresAt && now > new Date(expiresAt))
             return { body: { valid: false, message: 'Key expired', expiredAt: expiresAt } };
 
-        let hwidMismatch = kd.hwid && hwid && kd.hwid !== hwid;
-        let sameDevice = kd.hwid && hwid && kd.hwid === hwid;
-        // Reinstall / re-signed APK: HWID changed but the phone (model, board, build, kernel, name) is the same → rebind automatically.
-        if (hwidMismatch) {
-            const m = D.matchDevice(kd.device, device), used = kd.rebindCount || 0;
-            if (m.match && rebindMax > 0 && used < rebindMax) {
-                const hist = [...(kd.hwidHistory || []), { hwid: kd.hwid, until: now.toISOString() }].slice(-10);
-                updates.hwid = hwid; updates.rebindCount = used + 1; updates.lastRebindAt = now.toISOString(); updates.hwidHistory = hist;
-                hwidMismatch = false; sameDevice = true;                 // same phone: does NOT use up another login slot
-            } else return { body: { valid: false, message: 'HWID mismatch — different device' }, fail: true };
-        }
-        if (device && (sameDevice || !kd.hwid)) { updates.device = { ...device, firstSeenAt: (kd.device && kd.device.firstSeenAt) || now.toISOString() }; updates.deviceSeenAt = now.toISOString(); }
+        const hwidMismatch = kd.hwid && hwid && kd.hwid !== hwid;
+        const sameDevice = kd.hwid && hwid && kd.hwid === hwid;
+        if (hwidMismatch) return { body: { valid: false, message: 'HWID mismatch — different device' }, fail: true };
 
         if (!sameDevice) {
             if (kd.loginLimit > 0 && (kd.loginCount || 0) >= kd.loginLimit)
@@ -259,7 +248,7 @@ async function editKey(db, keyName, body = {}) {
 async function resetDeviceAdmin(db, keyName) {
     const ref = keysCol(db).doc(keyName);
     if (!(await ref.get()).exists) throw new HttpError(404, 'Not found');
-    await ref.update({ hwid: null, device: null, rebindCount: 0, loginCount: 0, lastResetAt: new Date().toISOString() });
+    await ref.update({ hwid: null, loginCount: 0, lastResetAt: new Date().toISOString() });
 }
 
 module.exports = {

@@ -141,17 +141,19 @@ function checkCert(cfg, cert) {
 }
 class AppDeny extends Error { constructor(code, message, status = 403) { super(message); this.code = code; this.status = status; } }
 
-// ── Key check that does NOT consume a login (read-only; used by stage 2) ──
-async function peekKey(db, rawKey, hwid, nowMs = Date.now()) {
-    const key = String(rawKey || '').trim().toUpperCase();
-    if (!L.KEY_RE.test(key)) throw new AppDeny('KEY_NOT_FOUND', 'Key not found');
-    const snap = await db.collection('keys').doc(key).get();
-    if (!snap.exists) throw new AppDeny('KEY_NOT_FOUND', 'Key not found');
-    const kd = snap.data();
+// ── Key check that does NOT consume a login (read-only; used by stage 2 and by every signed session call) ──
+function checkKeyData(kd, hwid, nowMs = Date.now()) {
+    if (!kd) throw new AppDeny('KEY_NOT_FOUND', 'Key not found');
     if (kd.status === 'revoked') throw new AppDeny('KEY_INVALID', 'Key revoked');
     if (kd.expiresAt && nowMs > new Date(kd.expiresAt).getTime()) throw new AppDeny('KEY_INVALID', 'Key expired');
     if (!kd.hwid || !hwid || kd.hwid !== hwid) throw new AppDeny('KEY_INVALID', 'Key is not bound to this device');
     return kd;
+}
+async function peekKey(db, rawKey, hwid, nowMs = Date.now()) {
+    const key = String(rawKey || '').trim().toUpperCase();
+    if (!L.KEY_RE.test(key)) throw new AppDeny('KEY_NOT_FOUND', 'Key not found');
+    const snap = await db.collection('keys').doc(key).get();
+    return checkKeyData(snap.exists ? snap.data() : null, hwid, nowMs);
 }
 
 // ── Short-lived stage-2 session tokens (HMAC, bound to key + device) ──
@@ -212,5 +214,5 @@ async function manifest(db, cfg, stage) {
     return { rev: cfg.rev, config: stage === 1 ? cfg.stage1 : cfg.stage2, assets };
 }
 
-module.exports = { SLOTS, FEATURES, MAX_ASSET, DEFAULTS, sniff, sanitizeSection, getConfig, saveSection, evalGate, checkCert, AppDeny, peekKey,
+module.exports = { SLOTS, FEATURES, MAX_ASSET, DEFAULTS, sniff, sanitizeSection, getConfig, saveSection, evalGate, checkCert, AppDeny, peekKey, checkKeyData,
     createTokens, putAsset, listAssets, deleteAsset, getAssetFile, manifest, normCert };
