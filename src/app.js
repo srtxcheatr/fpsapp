@@ -9,6 +9,7 @@ const cors      = require('cors');
 const L         = require('./lib');
 const S         = require('./service');
 const { mountAppRoutes } = require('./appRoutes');
+const { mountGuardRoutes } = require('./guardRoutes');
 const { HttpError, SITE_PREFIXES, KEY_RE } = L;
 
 /**
@@ -164,7 +165,9 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
         handler: (req, res) => res.status(429).json({ valid: false, message: 'Too many checks. Wait 5 minutes.' }) });
 
     app.get('/api/verify-key', verifyLimiter, needDb, safe(async (req, res) => {
-        const r = await S.verifyKey(req.db, req.query.key, req.query.hwid);
+        let device = null;                                   // legacy GET: optional ?dev=<base64url JSON> (≤ 1 KB)
+        try { const d = String(req.query.dev || ''); if (d && d.length <= 1400) device = JSON.parse(Buffer.from(d, 'base64url').toString()); } catch { /* ignore */ }
+        const r = await S.verifyKey(req.db, req.query.key, req.query.hwid, Date.now(), { device, rebindMax: config.AUTO_REBIND_MAX });
         if (r.fail) recordFail(req.ip);
         res.json(r.body);
     }));
@@ -359,6 +362,7 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
 
     // ═════════════════ APP CONTROL (server-driven UI, assets, gate) ═════════════════
     mountAppRoutes(app, { needDb, safe, adminAuth, audit, recordFail, config });
+    const guardAuth = mountGuardRoutes(app, { needDb, safe, adminAuth, recordFail, config });
 
     // ═════════════════ ADMIN PANEL (static) ═════════════════
     app.get('/admin', (req, res) => res.redirect(301, '/admin/'));
@@ -373,7 +377,7 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
         res.status(status).json({ error: status === 500 ? 'Server error' : (err instanceof HttpError ? err.message : 'Bad request') });
     });
 
-    app.locals.cleanup = () => clearInterval(sweep);
+    app.locals.cleanup = () => { clearInterval(sweep); guardAuth.cleanup(); };
     return app;
 }
 
