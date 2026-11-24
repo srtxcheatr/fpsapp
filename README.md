@@ -194,5 +194,16 @@ Endpoints: `GET /api/app/boot`, `POST /api/app/login`, `GET /api/app/stage2`, `G
 **Honest limit:** the macro / touch code still runs inside the APK, so a determined cracker can still read it. What this removes is everything cosmetic and everything that makes the app look like yours: without a valid key on a real signed APK there is no logo, no menu, no names, no sounds, no link to swap.
 
 
-## 🛡️ v4.3 Worker Guard
-5 Cloudflare Workers (`workers/`) sit in front of `/api/internal/guard/*` (HMAC `WORKER_SECRET`) and return RSA-signed verdicts to the app. Full guide + Google AI Studio prompt: **howtouse.md**. Local test: `node workers/test-workers.mjs`.
+---
+
+## 🔒 v5 — server-side sessions, signed requests, Cloudflare Worker
+
+See **HOWTOUSE.md** (deploy steps + the Google AI Studio prompt for the app).
+
+* `POST /api/app/login` now creates a real session in Firestore `app_sessions` (`sid` + `secret`); one active session per key; idle expiry `SESSION_IDLE_MIN` (13 min).
+* Signed calls (`/stage2`, stage-2 `/asset/:slot`, `/session/feature`, `/session/heartbeat`, `/session/logout`): HMAC-SHA256 + timestamp + strictly increasing counter; key re-read from the database each time.
+* Every `/api/app/*` JSON answer is signed with the server's EC P-256 key (`RESPONSE_SIGNING_KEY`, header `X-Resp-Sig`); the app embeds only the public key.
+* Each deny carries `action`: `CRACKED` · `CRASH` · `FIX_TIME` · `SHOW_ERROR` · `GATE` · `NONE`.
+* `ORIGIN_SECRET`: `/api/app/*` answers only the Cloudflare Worker (`worker/worker.js`), which also forwards the real client IP and keeps Render awake (cron).
+* Breaking change: the old stateless Bearer token is gone — old APKs must update (use Gate → `minVersionCode`).
+* v5.1: every `SERVER_CHECK_MIN` (8) minutes the server re-checks each live session (`app_sessions.live == true`) and, for dead sessions / bad keys, sends a signed FCM `FORCE_CLOSE` data push (`POST /api/app/session/push-token` registers the token). Worker `ORIGIN_URL` and `ORIGIN_SECRET` are Cloudflare *secrets*.

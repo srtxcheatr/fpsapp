@@ -23,8 +23,6 @@ const config = {
     PORT: parseInt(env.PORT) || 3000,
     ADMIN_PASS: env.ADMIN_PASS,
     SESSION_SECRET: env.SESSION_SECRET || '',
-    AUTO_REBIND_MAX: env.AUTO_REBIND_MAX === undefined ? 5 : Math.max(0, parseInt(env.AUTO_REBIND_MAX) || 0),   // same-phone HWID auto-rebinds per key (0 = off)
-    WORKER_SECRET: env.WORKER_SECRET || '',                          // shared with the 5 Cloudflare Workers (>= 32 chars)
     URLKING_API: env.URLKING_API || '',
     SITE_URL: env.SITE_URL.replace(/\/+$/, ''),
     FRONTEND_URL: (env.FRONTEND_URL || env.SITE_URL).replace(/\/+$/, ''),
@@ -33,13 +31,19 @@ const config = {
     TRUST_PROXY: env.TRUST_PROXY ? parseInt(env.TRUST_PROXY) : 1,   // Render: 1 proxy hop
     ALLOW_QUERY_TOKEN: env.ALLOW_QUERY_TOKEN === '1',                // legacy ?token=… (off: it leaks into logs)
     DISABLE_LEGACY_TOKEN: env.DISABLE_LEGACY_TOKEN === '1',          // refuse raw ADMIN_PASS in X-Admin-Token
+    ORIGIN_SECRET: env.ORIGIN_SECRET || '',                           // shared with the Cloudflare Worker; locks /api/app/* to it
+    RESPONSE_SIGNING_KEY: env.RESPONSE_SIGNING_KEY || '',             // EC P-256 private key (PEM) — signs every app response
+    SESSION_IDLE_MIN: parseInt(env.SESSION_IDLE_MIN) || 13,           // session dies if the app is silent this long (heartbeat = 10 min)
+    HEARTBEAT_SEC: parseInt(env.HEARTBEAT_SEC) || 600,
+    SERVER_CHECK_MIN: parseInt(env.SERVER_CHECK_MIN) || 8,             // server → app session check (FCM FORCE_CLOSE push)
 };
-if (config.WORKER_SECRET.length < 32) log.warn('WORKER_SECRET missing/short (<32) — /api/internal/guard/* is disabled until set');
+if (!config.ORIGIN_SECRET) log.warn('ORIGIN_SECRET not set — /api/app/* is reachable directly (not only through the Cloudflare Worker)');
+if (config.ORIGIN_SECRET && config.ORIGIN_SECRET.length < 24) log.warn('ORIGIN_SECRET is short — use 32+ random characters');
 if (!config.URLKING_API) log.warn('URLKING_API not set — /api/init-key-request is disabled');
 
 // ── Firebase (failure-safe) ──────────────────────────────────────
 const state = { firebase: { status: 'unavailable', reason: 'not initialised' } };
-let db = null, FieldValue = null;
+let db = null, FieldValue = null, messaging = null;
 try {
     const admin = require('firebase-admin');
     if (!env.FIREBASE_SERVICE_ACCOUNT_KEY) throw new Error('FIREBASE_SERVICE_ACCOUNT_KEY is not set');
@@ -48,6 +52,7 @@ try {
     admin.initializeApp({ credential: admin.credential.cert(sa) });
     db = admin.firestore();
     FieldValue = admin.firestore.FieldValue;
+    try { messaging = admin.messaging(); } catch (e) { log.warn('FCM unavailable — server cannot push FORCE_CLOSE', { reason: e.message }); }
     state.firebase = { status: 'ready' };
     log.info('Firebase initialised');
 } catch (e) {
@@ -76,6 +81,24 @@ const cleanup = setInterval(async () => {
     } catch (e) { log.err('Session cleanup failed', e); }
 }, 2 * 3600 * 1000);
 cleanup.unref();
+
+// Clean expired app sessions every 2h (they expired > 24h ago; skipped while Firebase is down)
+const sessionCleanup = setInterval(async () => {
+    if (!db || !app.locals.sessions) return;
+    try { const n = await app.locals.sessions.purge(db); if (n) log.info('App session cleanup', { deleted: n }); }
+    catch (e) { log.err('App session cleanup failed', e); }
+}, 2 * 3600 * 1000);
+sessionCleanup.unref();
+
+// Server → app check every SERVER_CHECK_MIN (8) minutes: dead session / bad key → signed FORCE_CLOSE push to the phone.
+const sweepTimer = setInterval(async () => {
+    if (!db || !app.locals.sessions) return;
+    try {
+        const r = await app.locals.sessions.sweep(db, { messaging, signer: app.locals.signer, log });
+        if (r.closed) log.info('Session sweep', r);
+    } catch (e) { log.err('Session sweep failed', e); }
+}, config.SERVER_CHECK_MIN * 60 * 1000);
+sweepTimer.unref();
 
 // ── Listen (Render: bind 0.0.0.0:$PORT) ──────────────────────────
 const server = app.listen(config.PORT, '0.0.0.0', () => {
