@@ -7,7 +7,8 @@ const clone = o => (o === undefined ? undefined : JSON.parse(JSON.stringify(o)))
 function makeFakeDb() {
     const store = new Map();                       // "col/id" -> data
     let chain = Promise.resolve();
-    const snap = (id, path) => ({ id, exists: store.has(path), data: () => clone(store.get(path)) });
+    const snap = (id, path) => ({ id, exists: store.has(path), data: () => clone(store.get(path)),
+        ref: { id, path, update: async d => write.update(path, d), delete: async () => write.delete(path) } });
     const err = (code, message) => Object.assign(new Error(message), { code });
     const write = {
         set: (p, d) => store.set(p, clone(d)),
@@ -29,6 +30,14 @@ function makeFakeDb() {
                     .map(k => snap(k.slice(col.length + 1), k));
                 return { docs, size: docs.length, empty: !docs.length };
             },
+            // minimal where(field, op, value).limit(n).get() — enough for the session sweeper / purge
+            where: (f, op, v) => { const q = { _lim: 1e9, limit(n) { q._lim = n; return q; }, where: (f2, op2, v2) => { q._w.push([f2, op2, v2]); return q; }, _w: [[f, op, v]],
+                get: async () => {
+                    const ok = (d, [ff, o, vv]) => o === '==' ? d[ff] === vv : o === '<' ? d[ff] < vv : o === '>' ? d[ff] > vv : false;
+                    const docs = [...store.keys()].filter(k => k.startsWith(col + '/')).sort().filter(k => q._w.every(w => ok(store.get(k), w)))
+                        .slice(0, q._lim).map(k => snap(k.slice(col.length + 1), k));
+                    return { docs, size: docs.length, empty: !docs.length };
+                } }; return q; },
         }),
         getAll: async (...refs) => { if (!refs.length) throw new Error('getAll needs refs'); return refs.map(r => snap(r.id, r.path)); },
         batch: () => {

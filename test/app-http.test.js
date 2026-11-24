@@ -2,6 +2,7 @@
 // HTTP-level tests for /api/app/* and /api/admin/app/* (real Express, fake Firestore).
 // Skipped (not failed) when dependencies are not installed — run `npm install && npm test`.
 const test = require('node:test');
+const crypto = require('crypto');
 const assert = require('node:assert/strict');
 let createApp; try { ({ createApp } = require('../src/app')); } catch (e) { createApp = null; }
 const L = require('../src/lib');
@@ -36,29 +37,34 @@ test('full 2-step flow: boot → login → stage2 → assets; key deleted → fi
         assert.equal((await t.call('POST', '/api/admin/app/assets', { body: { slot: 'overlay_logo', data: PNG.toString('base64') }, headers: t.adm })).status, 200);
 
         const b = await t.call('GET', '/api/app/boot?vc=4');
-        assert.equal(b.status, 200); assert.equal(b.json.config.getKeyUrl, 'https://get.example.com');
+        assert.equal(b.status, 200); assert.equal(b.json.config.getKeyUrl, 'https://get.example.com/');   // URL() normalises the trailing slash
         assert.deepEqual(b.json.assets.map(a => a.slot), ['login_logo']);
         assert.equal((await t.call('GET', '/api/app/asset/login_logo')).status, 200);
-        assert.equal((await t.call('GET', '/api/app/asset/overlay_logo')).json.code, 'TOKEN_EXPIRED');          // step-2 file without a token
+        assert.equal((await t.call('GET', '/api/app/asset/overlay_logo')).json.code, 'NO_SESSION');            // step-2 file without a session
 
         const [k] = await S.createKeys(t.db, { siteId: 'site1', count: 1 });
         const bad = await t.call('POST', '/api/app/login', { body: { key: 'SRT_NOPE1234', hwid: 'd1', vc: 4 } });
         assert.equal(bad.status, 403); assert.equal(bad.json.code, 'KEY_NOT_FOUND');
         const ok = await t.call('POST', '/api/app/login', { body: { key: k.key, hwid: 'd1', vc: 4 } });
-        assert.equal(ok.status, 200); assert.ok(ok.json.token);
-        const auth = { Authorization: `Bearer ${ok.json.token}` };
+        assert.equal(ok.status, 200); assert.ok(ok.json.sid && ok.json.secret);
+        let seq = 0;                                                                     // v5: every session call is HMAC-signed with a rising counter
+        const sign = (method, path) => {
+            const ts = Date.now(), n = ++seq, nonce = crypto.randomBytes(12).toString('base64url');
+            const sig = crypto.createHmac('sha256', ok.json.secret).update([method, path, ts, n, nonce, crypto.createHash('sha256').update('').digest('hex')].join('\n')).digest('base64url');
+            return { Authorization: `Bearer ${ok.json.sid}`, 'X-Ts': String(ts), 'X-Seq': String(n), 'X-Nonce': nonce, 'X-Sig': sig };
+        };
 
-        const s2 = await t.call('GET', '/api/app/stage2', { headers: auth });
+        const s2 = await t.call('GET', '/api/app/stage2', { headers: sign('GET', '/api/app/stage2') });
         assert.equal(s2.status, 200); assert.equal(s2.json.config.overlayName, 'MY MENU'); assert.equal(s2.json.config.features.macroE, false);
         assert.deepEqual(s2.json.assets.map(a => a.slot), ['overlay_logo']);
-        const f = await t.call('GET', '/api/app/asset/overlay_logo', { headers: auth });
+        const f = await t.call('GET', '/api/app/asset/overlay_logo', { headers: sign('GET', '/api/app/asset/overlay_logo') });
         assert.equal(f.status, 200); assert.ok(f.buf.equals(PNG)); assert.equal(f.headers.get('content-type'), 'image/png');
-        assert.equal((await t.call('GET', '/api/app/stage2', { headers: { Authorization: `Bearer ${ok.json.token}x` } })).json.code, 'TOKEN_EXPIRED');
+        assert.equal((await t.call('GET', '/api/app/stage2', { headers: { ...sign('GET', '/api/app/stage2'), Authorization: `Bearer ${ok.json.sid}x` } })).json.code, 'NO_SESSION');
 
         await S.deleteKeys(t.db, [k.key]);                                              // admin deletes the key → 2nd check refuses
-        const gone = await t.call('GET', '/api/app/stage2', { headers: auth });
+        const gone = await t.call('GET', '/api/app/stage2', { headers: sign('GET', '/api/app/stage2') });
         assert.equal(gone.status, 403); assert.equal(gone.json.code, 'KEY_NOT_FOUND');
-        assert.equal((await t.call('GET', '/api/app/asset/overlay_logo', { headers: auth })).status, 403);
+        assert.equal((await t.call('GET', '/api/app/asset/overlay_logo', { headers: sign('GET', '/api/app/asset/overlay_logo') })).status, 403);
     } finally { await t.close(); }
 });
 
