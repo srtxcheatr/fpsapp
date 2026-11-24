@@ -1,0 +1,10 @@
+name = "srtx-heartbeat"
+main = "index.js"
+compatibility_date = "2024-11-01"
+workers_dev = true
+
+[vars]
+SERVER_URL = "https://fpsapp.onrender.com"   # your Render server (no trailing slash)
+# MENU_NAME = "SENSI MACRO"                   # (menu worker only, optional) pin the menu name here instead of using the admin panel value
+
+# Secrets (NOT stored here) — set with:  npx wrangler secret put WORKER_SECRET | SESSION_SECRET | GUARD_PRIVATE_KEY
