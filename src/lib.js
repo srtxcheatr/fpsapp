@@ -7,9 +7,9 @@ const PREFIX_TO_SITE = Object.fromEntries(Object.entries(SITE_PREFIXES).map(([s,
 const KEY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 // Suffix 4–32 chars (was fixed 8). Superset of the old format, so every existing key still verifies.
 // v6: any admin-chosen prefix (2–10 chars, starts with a letter) + one or more groups, e.g. SRT_ABCD1234, XE_AB_CD_EF_GH. Max 80 chars total.
-const KEY_RE = /^(?=.{4,80}$)[A-Z][A-Z0-9]{1,9}(?:_[A-Z0-9]{2,32}){1,16}$/;
+const KEY_RE = /^(?=.{4,80}$)[A-Z][A-Z0-9]{1,9}(?:[_-][A-Z0-9]{2,32}){1,16}$/;   // separators: _ or -
 const PREFIX_RE = /^[A-Z][A-Z0-9]{1,9}$/;                // a reseller's key prefix
-const KEY_FORMATS = ['plain', 'grouped'];                 // plain: SRT_ABCDEFGH   grouped: XE_AB_CD_EF_GH
+const KEY_FORMATS = ['plain', 'grouped', 'dashed'];         // plain: SRT_ABCDEF   grouped: XE_AB_CD_EF_GH   dashed: XC-ABCD-7216-GD43 (groups of 4, length 8/12/16)
 const DAY = 86400000;
 
 class HttpError extends Error {
@@ -19,7 +19,7 @@ class HttpError extends Error {
 // ── Safe logger ──────────────────────────────────────────────────
 // Never prints secrets, key values, HWIDs or query strings.
 const SECRET_FIELD = /pass|token|secret|authorization|cookie|private|credential|hwid|csrf/i;
-const KEY_IN_TEXT  = /\b([A-Z][A-Z0-9]{1,9})_([A-Z0-9]{2})(?:[A-Z0-9]{0,30})(?:_[A-Z0-9]{2,32}){0,16}\b/g;
+const KEY_IN_TEXT  = /\b([A-Z][A-Z0-9]{1,9})_([A-Z0-9]{2})(?:[A-Z0-9]{0,30})(?:[_-][A-Z0-9]{2,32}){0,16}\b/g;
 
 function maskKey(k) {
     return String(k).replace(KEY_IN_TEXT, (m, p, head) => (m.length >= p.length + 5 ? `${p}_${head}****` : m));
@@ -51,6 +51,7 @@ function makeLogger(sink = console) {
 function generateKey(prefix, length = 8, format = 'plain') {
     let s = '';
     for (let i = 0; i < length; i++) s += KEY_CHARS[crypto.randomInt(KEY_CHARS.length)]; // CSPRNG (was Math.random)
+    if (format === 'dashed') return `${prefix}-${s.match(/.{1,4}/g).join('-')}`;           // 12 chars → XC-ABCD-7216-GD43
     if (format === 'grouped') {                                                          // 8 chars → AB_CD_EF_GH (odd length: last group has 3, e.g. 7 → AB_CD_EFG)
         const g = s.match(/.{1,2}/g);
         if (g.length > 1 && g[g.length - 1].length === 1) { const lone = g.pop(); g[g.length - 1] += lone; }

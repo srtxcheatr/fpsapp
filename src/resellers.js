@@ -54,10 +54,19 @@ function parseStyle(o = {}, cur = DEFAULT_STYLE) {
         if (!L.PREFIX_RE.test(p)) throw new HttpError(400, 'Key prefix: 2–10 characters, A–Z and 0–9, starting with a letter');
         out.keyPrefix = p;
     }
-    if (o.keyLength !== undefined) out.keyLength = L.intIn(o.keyLength, cur.keyLength, 6, 8, 'keyLength');
     if (o.keyFormat !== undefined) {
-        if (!L.KEY_FORMATS.includes(o.keyFormat)) throw new HttpError(400, 'keyFormat must be plain or grouped');
+        if (!L.KEY_FORMATS.includes(o.keyFormat)) throw new HttpError(400, 'keyFormat must be plain, grouped or dashed');
         out.keyFormat = o.keyFormat;
+    }
+    const fmt = out.keyFormat || cur.keyFormat;
+    const hasLen = o.keyLength !== undefined && o.keyLength !== '' && o.keyLength !== null;
+    if (hasLen) {
+        const n = Number(o.keyLength);
+        if (fmt === 'dashed' ? ![8, 12, 16].includes(n) : !(Number.isInteger(n) && n >= 6 && n <= 8))
+            throw new HttpError(400, fmt === 'dashed' ? 'keyLength for the dashed style must be 8, 12 or 16' : 'keyLength must be 6–8');
+        out.keyLength = n;
+    } else if (out.keyFormat && out.keyFormat !== cur.keyFormat) {                  // style changed, no length given → sensible default
+        out.keyLength = fmt === 'dashed' ? 12 : 8;
     }
     return out;
 }
@@ -79,7 +88,7 @@ async function createReseller(db, o = {}, nowMs = Date.now()) {
     if (RESERVED.has(username)) throw new HttpError(400, 'That username is reserved');
     validPassword(o.password);
     const keyLimit = L.intIn(o.keyLimit, 10, 0, MAX_LIMIT, 'keyLimit');
-    const style = { ...DEFAULT_STYLE, ...parseStyle(o) };
+    const style = { ...DEFAULT_STYLE, ...parseStyle(o, DEFAULT_STYLE) };
     const api = makeApiKey(username);
     const doc = { username, ...style, ...(await hashPassword(o.password)), status: 'active', apiEnabled: true, keyLimit, keysUsed: 0, usedByDay: {},
         sessVer: 1, failCount: 0, lockUntil: 0, apiKeyHash: api.hash, apiHint: api.hint,
