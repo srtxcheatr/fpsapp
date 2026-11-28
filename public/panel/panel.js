@@ -61,6 +61,7 @@ function renderMe() {
   $('apiState').textContent = me.apiEnabled ? 'API: enabled' : 'API: blocked by the owner'; $('apiState').className = 'apistate ' + (me.apiEnabled ? 'on' : 'off');
   $('apiHint').textContent = me.apiHint || '—'; $('apiBase').textContent = origin + '/api/v1';
   $('exGet').textContent = `curl -X POST ${origin}/api/v1/keys \\\n  -H "X-Api-Key: YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"days":5,"count":3}'`;
+  $('resetUrl').textContent = origin + (me.resetPath || '/reset/' + me.username + '/reset'); $('keyStyle').textContent = me.keyExample || '';
   $('exMe').textContent = `curl ${origin}/api/v1/me \\\n  -H "X-Api-Key: YOUR_API_KEY"`;
 }
 
