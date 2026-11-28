@@ -40,12 +40,14 @@ async function copy(text, msg = 'Copied') {
 function ask(title, fields = [], { text = '', ok = 'OK', danger = false } = {}) {
   const dlg = $('dlg'); $('dlgTitle').textContent = title;
   const body = $('dlgBody'); body.replaceChildren(text ? h('p', {}, text) : '',
-    ...fields.map(f => h('label', {}, f.label, h('input', { name: f.name, type: f.type || 'text', value: f.value ?? '', min: f.min, max: f.max, autocomplete: 'off', inputmode: f.type === 'number' ? 'numeric' : null }))));
+    ...fields.map(f => h('label', {}, f.label, f.type === 'select'
+      ? h('select', { name: f.name }, ...f.options.map(([v, t]) => h('option', { value: v, ...(String(v) === String(f.value) ? { selected: true } : {}) }, t)))
+      : h('input', { name: f.name, type: f.type || 'text', value: f.value ?? '', min: f.min, max: f.max, maxlength: f.maxlength, autocomplete: 'off', inputmode: f.type === 'number' ? 'numeric' : null }))));
   const okBtn = $('dlgOk'); okBtn.textContent = ok; okBtn.className = danger ? 'solid-danger' : 'primary';
   return new Promise(resolve => {
     dlg.addEventListener('close', () => {
       if (dlg.returnValue !== 'ok') return resolve(null);
-      resolve(Object.fromEntries([...body.querySelectorAll('input')].map(i => [i.name, i.value])));
+      resolve(Object.fromEntries([...body.querySelectorAll('input,select')].map(i => [i.name, i.value])));
     }, { once: true });
     dlg.returnValue = 'cancel'; dlg.showModal();
     const first = body.querySelector('input'); if (first) first.select();
