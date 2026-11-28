@@ -1,1 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#060912">
+<title>SENSI MACRO · Reseller</title>
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
+  <symbol id="mark" viewBox="0 0 48 48"><circle cx="24" cy="24" r="21" fill="none" stroke="currentColor" stroke-width="2.5"/><circle cx="24" cy="24" r="8.5" fill="none" stroke="currentColor" stroke-width="2.5"/><circle cx="24" cy="24" r="3" fill="currentColor"/><circle cx="24" cy="9" r="3.4" fill="currentColor"/><circle cx="37" cy="31.5" r="3.4" fill="currentColor"/><circle cx="11" cy="31.5" r="3.4" fill="currentColor"/></symbol>
+</svg>
 
+<main id="login" class="wrap narrow" hidden>
+  <div class="brand big"><svg class="mark"><use href="#mark"/></svg><h1>SENSI MACRO</h1></div>
+  <p class="sub">Reseller console</p>
+  <form id="loginForm" class="slab" autocomplete="on">
+    <label for="user">Username</label>
+    <input id="user" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+    <label for="pw">Password</label>
+    <div class="pwrow"><input id="pw" name="password" type="password" autocomplete="current-password" required><button type="button" id="showPw" class="ghost" aria-pressed="false">Show</button></div>
+    <button class="go" id="loginBtn">Sign in</button>
+    <p id="loginErr" class="err" role="alert"></p>
+  </form>
+  <p class="foot">Accounts are created by the owner. No account? Ask the owner.</p>
+</main>
+
+<main id="app" class="wrap" hidden>
+  <header class="top">
+    <div class="brand"><svg class="mark" id="markLive"><use href="#mark"/></svg><div><h1>SENSI MACRO</h1><span id="who" class="sub"></span></div></div>
+    <button id="logout" class="ghost">Sign out</button>
+  </header>
+
+  <section class="quota" aria-label="Key limit">
+    <div class="qnum"><b id="qLeft">0</b><span>keys left</span></div>
+    <div class="qmeta"><div id="meter" class="meter" role="img"></div><p id="qText"></p></div>
+  </section>
+  <p id="blocked" class="notice" role="status" hidden></p>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="get" class="on" aria-selected="true">Get keys</button>
+    <button role="tab" data-tab="keys" aria-selected="false">My keys</button>
+    <button role="tab" data-tab="api" aria-selected="false">API</button>
+  </nav>
+
+  <section id="tab-get">
+    <div class="opts">
+      <div class="qty" role="group" aria-label="How many keys"><span>Keys per tap</span>
+        <button data-q="1" class="on">1</button><button data-q="5">5</button><button data-q="10">10</button><button data-q="25">25</button>
+      </div>
+      <input id="label" maxlength="60" placeholder="Customer name (optional)" autocomplete="off" aria-label="Customer name, optional">
+    </div>
+    <ul id="ladder" class="ladder"></ul>
+    <div id="out" class="term" hidden>
+      <div class="termhead"><code id="cmd"></code><span><button id="copyAll" class="ghost">Copy all</button></span></div>
+      <ol id="outKeys"></ol>
+    </div>
+  </section>
+
+  <section id="tab-keys" hidden>
+    <p id="keysEmpty" class="empty" hidden>No keys yet. Get your first key from the other tab.</p>
+    <ul id="keyList" class="klist"></ul>
+  </section>
+
+  <section id="tab-api" hidden>
+    <div class="slab">
+      <h2>Key-fetch API</h2>
+      <p id="apiState" class="apistate"></p>
+      <p class="hint">Send your API key in the <code>X-Api-Key</code> header. Days: 1 to 7. Up to 50 keys per request, 60 requests per minute.</p>
+      <label>Base URL</label><pre class="code" id="apiBase"></pre>
+      <label>Get 3 keys valid for 5 days</label><pre class="code" id="exGet"></pre>
+      <button class="ghost" data-copy="exGet">Copy</button>
+      <label>Your limit and usage</label><pre class="code" id="exMe"></pre>
+      <button class="ghost" data-copy="exMe">Copy</button>
+    </div>
+    <div class="slab">
+      <h2>Your API key</h2>
+      <p class="hint">Stored hashed on the server, so it can only be shown once. Current key: <code id="apiHint"></code></p>
+      <button id="regen" class="go sm">Generate a new API key</button>
+      <div id="newKeyBox" hidden><p class="warn">Copy it now. The old key already stopped working.</p><pre class="code" id="newKey"></pre><button class="ghost" data-copy="newKey">Copy</button></div>
+    </div>
+  </section>
+
+  <p id="toast" role="status" aria-live="polite"></p>
+</main>
+
+<dialog id="dlg"><form method="dialog"><h3 id="dlgTitle"></h3><p id="dlgText"></p><menu><button value="ok" class="go sm" id="dlgOk">OK</button><button value="cancel" class="ghost">Cancel</button></menu></form></dialog>
+<script src="panel.js"></script>
+</body>
+</html>
