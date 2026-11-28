@@ -1,5 +1,6 @@
 'use strict';
 const path      = require('path');
+const fs        = require('fs');
 const crypto    = require('crypto');
 const net       = require('net');
 const express   = require('express');
@@ -11,6 +12,7 @@ const L         = require('./lib');
 const S         = require('./service');
 const { mountAppRoutes } = require('./appRoutes');
 const { mountResellerRoutes } = require('./resellerRoutes');
+const R = require('./resellers');
 const { HttpError, SITE_PREFIXES, KEY_RE } = L;
 
 /**
@@ -194,24 +196,30 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
     const resetLimiter = rateLimit({ windowMs: 3600000, limit: 3, standardHeaders: true, legacyHeaders: false,
         handler: (req, res) => { recordFail(req.ip); res.status(429).json({ success: false, message: 'Too many reset attempts. Try again in 1 hour.' }); } });
 
+    // Reset works for every key style. Optional body.reseller restricts it to that account's keys (the /reset/<username> pages use it).
     app.post('/api/reset-device', resetLimiter, needDb, safe(async (req, res) => {
-        const key = S.normKey(req.body && req.body.key);
-        if (!KEY_RE.test(key)) { recordFail(req.ip); return res.json({ success: false, message: 'Invalid key format' }); }
-        const ref = req.db.collection('keys').doc(key), doc = await ref.get();
-        if (!doc.exists) { recordFail(req.ip); return res.json({ success: false, message: 'Key not found' }); }
-        const kd = doc.data();
-        if (kd.status === 'revoked') return res.json({ success: false, message: 'Key revoked' });
-        if (kd.expiresAt && new Date() > new Date(kd.expiresAt)) return res.json({ success: false, message: 'Cannot reset an expired key' });
-        if (kd.lastResetAt) {
-            const hrs = (Date.now() - new Date(kd.lastResetAt).getTime()) / 3600000;
-            if (hrs < 24) {
-                const h = Math.ceil(24 - hrs), m = Math.ceil((24 - hrs - Math.floor(24 - hrs)) * 60);
-                return res.json({ success: false, message: `Cooldown active — ${h}h ${m}m remaining` });
-            }
-        }
-        await ref.update({ hwid: null, loginCount: 0, lastResetAt: new Date().toISOString() });
-        res.json({ success: true, message: 'Device unlinked! You can now log in from a new device.' });
+        const b = req.body || {};
+        const reseller = b.reseller ? String(b.reseller).trim().toLowerCase() : null;
+        if (reseller && !R.USER_RE.test(reseller)) { recordFail(req.ip); return res.json({ success: false, message: 'Key not found' }); }
+        const r = await S.resetDevicePublic(req.db, b.key, { reseller });
+        if (r.fail) recordFail(req.ip);
+        res.json({ success: r.ok, message: r.message });
     }));
+
+    // Per-reseller reset page:  GET /reset/<username>  (static shell + external JS, so the strict CSP stays intact)
+    const resetPage = fs.readFileSync(path.join(__dirname, 'resetPage.html'), 'utf8');
+    const escHtml = t => String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    app.use('/reset', express.static(path.join(__dirname, '..', 'public', 'reset'), { index: false, dotfiles: 'ignore', maxAge: 0 }));
+    const sendReset = (res, who, example) => res.type('html').send(resetPage
+        .replace(/\{\{USER\}\}/g, escHtml(who || '')).replace(/\{\{BRAND\}\}/g, escHtml(who ? '@' + who : 'SRT X CHEATS')).replace(/\{\{EXAMPLE\}\}/g, escHtml(example)));
+    app.get('/reset', (req, res) => sendReset(res, '', 'SRT_XXXXXX'));
+    app.get(['/reset/:user/reset', '/reset/:user/index.html_keyreset'], needDb, safe(async (req, res) => {
+        const u = String(req.params.user || '').toLowerCase();
+        const snap = R.USER_RE.test(u) ? await req.db.collection(R.COL).doc(u).get() : { exists: false };
+        if (!snap.exists) return res.status(404).type('text').send('Reset page not found');
+        sendReset(res, u, R.exampleKey(R.styleOf(snap.data())));
+    }));
+    app.get('/reset/:user', (req, res) => R.USER_RE.test(String(req.params.user).toLowerCase()) ? res.redirect(302, `/reset/${encodeURIComponent(req.params.user.toLowerCase())}/reset`) : res.status(404).type('text').send('Reset page not found'));
 
     // ═════════════════ ADMIN AUTH ═════════════════
     const adminLoginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, skipSuccessfulRequests: true, // only FAILED logins count

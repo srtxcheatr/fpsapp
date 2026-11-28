@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Reset key device · {{BRAND}}</title>
+<link rel="stylesheet" href="/reset/reset.css">
+</head>
+<body>
+<main class="wrap" id="app" data-user="{{USER}}" data-example="{{EXAMPLE}}">
+  <header class="mast">
+    <div class="brand">{{BRAND}}</div>
+    <div class="tag">Key device reset</div>
+  </header>
+  <section class="card">
+    <h1>Reset key device</h1>
+    <p class="lead">Move your key to a new device.</p>
+    <div class="notice"><b>Read before you reset</b> This removes the device lock only. Your timer and expiry date do not change. You can reset once every <b>24 hours</b>.</div>
+    <label for="key">Your key</label>
+    <input id="key" type="text" maxlength="80" placeholder="{{EXAMPLE}}" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <button id="go" type="button">Reset my device</button>
+    <div id="result" role="status" hidden></div>
+  </section>
+  <p class="foot">&copy; 2026 SRT X CHEATS</p>
+</main>
+<script src="/reset/reset.js"></script>
+</body>
+</html>

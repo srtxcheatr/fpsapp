@@ -19,6 +19,7 @@ const RESERVED = new Set(['admin', 'owner', 'root', 'api', 'system', 'support'])
 const SITE = 'site2';                       // SENSI  →  "SENSI MACRO"
 const MAX_DAYS = 7, MAX_PER_REQUEST = 50, MAX_LIMIT = 1000000;
 const FAIL_LIMIT = 5, LOCK_MS = 15 * 60 * 1000, SESSION_MS = 8 * 3600 * 1000;
+const DEFAULT_STYLE = { keyPrefix: 'SENSI', keyLength: 8, keyFormat: 'plain' };      // what accounts created before v6 produced
 const rand = n => crypto.randomBytes(n).toString('base64url');
 const sha256 = s => crypto.createHash('sha256').update(String(s)).digest('hex');
 const col = db => db.collection(COL);
@@ -45,8 +46,27 @@ function validPassword(pw) {
 const API_RE = /^srtx\.([a-z0-9_]{3,24})\.([A-Za-z0-9_-]{43})$/;
 const makeApiKey = id => { const key = `srtx.${id}.${rand(32)}`; return { key, hash: sha256(key), hint: key.slice(0, 10) + '…' + key.slice(-4) }; };
 
+// Key style the owner picks per reseller: prefix (SRT, XE, …), 6–8 random characters, plain (SRT_ABCDEF) or grouped (XE_AB_CD_EF_GH)
+function parseStyle(o = {}, cur = DEFAULT_STYLE) {
+    const out = {};
+    if (o.keyPrefix !== undefined) {
+        const p = String(o.keyPrefix).trim().toUpperCase();
+        if (!L.PREFIX_RE.test(p)) throw new HttpError(400, 'Key prefix: 2–10 characters, A–Z and 0–9, starting with a letter');
+        out.keyPrefix = p;
+    }
+    if (o.keyLength !== undefined) out.keyLength = L.intIn(o.keyLength, cur.keyLength, 6, 8, 'keyLength');
+    if (o.keyFormat !== undefined) {
+        if (!L.KEY_FORMATS.includes(o.keyFormat)) throw new HttpError(400, 'keyFormat must be plain or grouped');
+        out.keyFormat = o.keyFormat;
+    }
+    return out;
+}
+const styleOf = r => ({ keyPrefix: r.keyPrefix || DEFAULT_STYLE.keyPrefix, keyLength: r.keyLength || DEFAULT_STYLE.keyLength, keyFormat: r.keyFormat || DEFAULT_STYLE.keyFormat });
+const exampleKey = st => L.generateKey(st.keyPrefix, st.keyLength, st.keyFormat).replace(/[A-Z0-9]/g, (c, i, str) => i < st.keyPrefix.length ? c : 'X');   // e.g. XE_XX_XX_XX_XX
+
 // ── what the outside world may see of a reseller ──
 const view = r => r && ({
+    ...styleOf(r), keyExample: exampleKey(styleOf(r)), resetPath: `/reset/${r.username}/reset`,
     username: r.username, status: r.status, apiEnabled: r.apiEnabled, keyLimit: r.keyLimit, keysUsed: r.keysUsed || 0,
     keysLeft: Math.max(0, r.keyLimit - (r.keysUsed || 0)), usedByDay: r.usedByDay || {}, note: r.note || '', apiHint: r.apiHint || '',
     createdAt: r.createdAt, lastLoginAt: r.lastLoginAt || null, lastApiAt: r.lastApiAt || null,
@@ -59,8 +79,9 @@ async function createReseller(db, o = {}, nowMs = Date.now()) {
     if (RESERVED.has(username)) throw new HttpError(400, 'That username is reserved');
     validPassword(o.password);
     const keyLimit = L.intIn(o.keyLimit, 10, 0, MAX_LIMIT, 'keyLimit');
+    const style = { ...DEFAULT_STYLE, ...parseStyle(o) };
     const api = makeApiKey(username);
-    const doc = { username, ...(await hashPassword(o.password)), status: 'active', apiEnabled: true, keyLimit, keysUsed: 0, usedByDay: {},
+    const doc = { username, ...style, ...(await hashPassword(o.password)), status: 'active', apiEnabled: true, keyLimit, keysUsed: 0, usedByDay: {},
         sessVer: 1, failCount: 0, lockUntil: 0, apiKeyHash: api.hash, apiHint: api.hint,
         note: String(o.note || '').slice(0, 200), createdAt: new Date(nowMs).toISOString(), lastLoginAt: null, lastApiAt: null };
     try { await col(db).doc(username).create(doc); }
@@ -81,6 +102,7 @@ async function updateReseller(db, rawId, p = {}) {
     const { ref, data } = await loadRaw(db, rawId), u = {};
     if (p.keyLimit !== undefined) u.keyLimit = L.intIn(p.keyLimit, data.keyLimit, 0, MAX_LIMIT, 'keyLimit');
     if (p.status !== undefined) { if (!['active', 'blocked'].includes(p.status)) throw new HttpError(400, 'status must be active or blocked'); u.status = p.status; if (p.status === 'blocked') u.sessVer = (data.sessVer || 1) + 1; }   // blocked → signed out everywhere
+    Object.assign(u, parseStyle(p, styleOf(data)));                  // affects keys made from now on; existing keys are untouched
     if (p.apiEnabled !== undefined) u.apiEnabled = p.apiEnabled === true || p.apiEnabled === 'true';
     if (p.note !== undefined) u.note = String(p.note).slice(0, 200);
     if (p.resetUsed === true) { u.keysUsed = 0; u.usedByDay = {}; }
@@ -193,10 +215,11 @@ async function fetchKeys(db, id, { days, count, label } = {}, nowMs = Date.now()
     const n = L.intIn(count, 1, 1, MAX_PER_REQUEST, 'count');
     const lab = String(label || '').replace(/[\u0000-\u001f<>]/g, '').slice(0, 60);
     const ref = col(db).doc(id);
+    let acct;
     await db.runTransaction(async tx => {
         const snap = await tx.get(ref);
         if (!snap.exists) throw new HttpError(404, 'Account not found');
-        const r = snap.data();
+        const r = snap.data(); acct = r;
         if (r.status !== 'active') throw new HttpError(403, 'Account blocked by the owner');
         if (!r.apiEnabled) throw new HttpError(403, 'API access is blocked by the owner');
         const left = r.keyLimit - (r.keysUsed || 0);
@@ -206,7 +229,8 @@ async function fetchKeys(db, id, { days, count, label } = {}, nowMs = Date.now()
     });
     let made;
     try {
-        made = await S.createKeys(db, { siteId: SITE, count: n, duration: d, loginLimit: 1, label: lab, note: `reseller:${id}`, type: 'standard', extra: { resellerId: id } }, nowMs);
+        const st = styleOf(acct);
+        made = await S.createKeys(db, { siteId: SITE, prefix: st.keyPrefix, format: st.keyFormat, length: st.keyLength, count: n, duration: d, loginLimit: 1, label: lab, note: `reseller:${id}`, type: 'standard', extra: { resellerId: id } }, nowMs);
     } catch (e) {                                                    // give the quota back if the keys could not be made
         await db.runTransaction(async tx => {
             const s = await tx.get(ref); if (!s.exists) return;
@@ -219,5 +243,5 @@ async function fetchKeys(db, id, { days, count, label } = {}, nowMs = Date.now()
     return { days: d, count: made.length, keys: made.map(k => k.key), keyLimit: after.keyLimit, keysUsed: after.keysUsed, keysLeft: Math.max(0, after.keyLimit - after.keysUsed) };
 }
 
-module.exports = { COL, SITE, MAX_DAYS, MAX_PER_REQUEST, USER_RE, view, createReseller, listResellers, updateReseller, setPassword, regenApiKey, deleteReseller,
+module.exports = { COL, SITE, DEFAULT_STYLE, parseStyle, styleOf, exampleKey, MAX_DAYS, MAX_PER_REQUEST, USER_RE, view, createReseller, listResellers, updateReseller, setPassword, regenApiKey, deleteReseller,
     revokeAllKeys, listKeys, keysOf, login, createSessions, accountForSession, logoutEverywhere, accountForApiKey, ownRegenApiKey, fetchKeys, loadRaw };

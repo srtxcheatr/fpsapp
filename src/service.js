@@ -59,6 +59,10 @@ async function verifyKey(db, rawKey, rawHwid, nowMs = Date.now()) {
 // ═══ ADMIN: create ═════════════════════════════════════════════
 async function createKeys(db, o = {}, nowMs = Date.now()) {
     const siteId = SITE_PREFIXES[o.siteId] ? o.siteId : 'site1';
+    // Optional per-call key style (used by resellers): own prefix + plain/grouped layout. Without it the site prefix is used, as before.
+    const prefix = o.prefix ? String(o.prefix).toUpperCase() : SITE_PREFIXES[siteId];
+    if (!L.PREFIX_RE.test(prefix)) throw new HttpError(400, 'Invalid key prefix');
+    const format = L.KEY_FORMATS.includes(o.format) ? o.format : 'plain';
     const count = L.intIn(o.count, 1, 1, 100, 'count');
     const length = L.intIn(o.length, 8, 6, 32, 'length');
     const durationDays = L.intIn(o.duration ?? o.durationDays, 7, 1, 3650, 'duration');
@@ -94,7 +98,7 @@ async function createKeys(db, o = {}, nowMs = Date.now()) {
     for (let i = 0; i < count; i += 10) {                                         // small parallel chunks
         const n = Math.min(10, count - i);
         const part = await Promise.all(Array.from({ length: n }, () =>
-            make(() => ({ key: L.generateKey(SITE_PREFIXES[siteId], length), siteId }), 10)));
+            make(() => ({ key: L.generateKey(prefix, length, format), siteId }), 10)));
         if (part.includes(null)) throw new HttpError(500, 'Could not generate a unique key');
         out.push(...part);
     }
@@ -252,7 +256,35 @@ async function resetDeviceAdmin(db, keyName) {
     await ref.update({ hwid: null, loginCount: 0, lastResetAt: new Date().toISOString() });
 }
 
+// ═══ PUBLIC: customer self-service device reset ═══════════════
+// Works for every key style (SRT_XXXXXX, XE_XX_XX_XX_XX, …).  `reseller` (optional) limits the reset to keys that account made:
+// the reset page of one reseller can never touch another reseller's keys.  Cooldown: once per 24 h.  Runs in a transaction,
+// so two parallel requests can't both pass the cooldown.
+const RESET_COOLDOWN_H = 24;
+async function resetDevicePublic(db, rawKey, { reseller } = {}, nowMs = Date.now()) {
+    const key = normKey(rawKey);
+    if (!KEY_RE.test(key)) return { ok: false, message: 'Invalid key format', fail: true };
+    const who = reseller ? String(reseller).toLowerCase() : null;
+    const ref = keysCol(db).doc(key);
+    return db.runTransaction(async tx => {
+        const snap = await tx.get(ref);
+        const kd = snap.exists ? snap.data() : null;
+        if (!kd || (who && kd.resellerId !== who)) return { ok: false, message: 'Key not found', fail: true };   // same answer either way: no probing other accounts' keys
+        if (kd.status === 'revoked') return { ok: false, message: 'Key revoked' };
+        if (kd.expiresAt && nowMs > new Date(kd.expiresAt).getTime()) return { ok: false, message: 'Cannot reset an expired key' };
+        if (kd.lastResetAt) {
+            const left = RESET_COOLDOWN_H * 3600000 - (nowMs - new Date(kd.lastResetAt).getTime());
+            if (left > 0) {
+                const mins = Math.ceil(left / 60000);
+                return { ok: false, cooldown: true, message: `Cooldown active — ${Math.floor(mins / 60)}h ${mins % 60}m remaining` };
+            }
+        }
+        tx.update(ref, { hwid: null, loginCount: 0, lastResetAt: new Date(nowMs).toISOString() });
+        return { ok: true, message: 'Device unlinked! You can now log in from a new device.' };
+    });
+}
+
 module.exports = {
-    BULK_MAX, normKey, verifyKey, createKeys, searchKeys, matchingKeyIds, allKeys, withStatus, filterKeys, stats,
+    BULK_MAX, resetDevicePublic, normKey, verifyKey, createKeys, searchKeys, matchingKeyIds, allKeys, withStatus, filterKeys, stats,
     revokeKeys, restoreKeys, deleteKeys, extendKeys, setExpiry, editKey, resetDeviceAdmin, applyToKeys,
 };
