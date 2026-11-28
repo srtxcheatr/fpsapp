@@ -207,3 +207,15 @@ See **HOWTOUSE.md** (deploy steps + the Google AI Studio prompt for the app).
 * `ORIGIN_SECRET`: `/api/app/*` answers only the Cloudflare Worker (`worker/worker.js`), which also forwards the real client IP and keeps Render awake (cron).
 * Breaking change: the old stateless Bearer token is gone — old APKs must update (use Gate → `minVersionCode`).
 * v5.1: every `SERVER_CHECK_MIN` (8) minutes the server re-checks each live session (`app_sessions.live == true`) and, for dead sessions / bad keys, sends a signed FCM `FORCE_CLOSE` data push (`POST /api/app/session/push-token` registers the token). Worker `ORIGIN_URL` and `ORIGIN_SECRET` are Cloudflare *secrets*.
+
+---
+
+## 👑 v6 — Owner panel + reseller panels
+
+* `/admin/` is now the **Owner Panel** (new **Resellers** tab). `/panel/` is the reseller panel **SENSI MACRO** (1–7 day keys).
+* Collection `resellers/<username>`: scrypt password hash, `keyLimit`, `keysUsed` (transactional), `status` (active/blocked), `apiEnabled`, SHA-256 of the API key (`srtx.<user>.<43 chars>`), `sessVer` (bump = sign out everywhere).
+* Reseller keys are normal `keys` docs (SENSI prefix, `loginLimit` 1, `durationDays` 1–7) with `resellerId` — the app's login path is untouched.
+* Owner API: `/api/admin/resellers` (GET, POST), `/:id` (PATCH keyLimit/status/apiEnabled/note/resetUsed, DELETE {confirm}), `/:id/password`, `/:id/api-key`, `/:id/keys`, `/:id/revoke-keys`.
+* Reseller panel API (cookie + CSRF): `/api/reseller/login|session|logout|keys|keys/generate|api-key`.
+* Key-fetch API (`X-Api-Key`): `GET /api/v1/me`, `GET /api/v1/keys`, `POST /api/v1/keys {days:1-7,count:1-50,label}`.
+* Fixed: `/admin/` used to redirect to itself (trailing-slash loop).

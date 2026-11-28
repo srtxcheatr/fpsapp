@@ -172,6 +172,60 @@ hardCrash(): works from ANY thread, no dialog: stop services/overlay, then andro
 
 ---
 
+## D) Owner panel + Reseller panel (new)
+
+Your old admin panel is now the **Owner Panel**. Same address and same password as before: `https://YOUR-SERVICE.onrender.com/admin/` (`/owner/` also works). Resellers get their own panel at `https://YOUR-SERVICE.onrender.com/panel/`. Both live on your Render URL (not on the Worker). The app login system was **not changed**: reseller keys are normal `SENSI_…` keys, and the app checks them exactly like your own keys.
+
+### Owner: create a reseller
+1. Owner Panel → **Resellers** tab → **+ New reseller**.
+2. Enter a username, a password (a strong one is pre-filled) and the **key limit** (the total number of keys this reseller may ever make).
+3. Press **Create**. You get a box with the panel address, username, password and **API key**. Copy it now and send it to the reseller. Passwords and API keys are stored hashed, so they can't be shown again (you can always make new ones).
+
+### Owner: control a reseller (each reseller card)
+| Button | What it does |
+|---|---|
+| **View keys** | all keys this reseller made, with status |
+| **Block API** / **Enable API** | stops (or restores) key fetching. The reseller's panel buttons and their API both stop, they can still sign in and see their keys |
+| **Block account** / **Unblock** | locks the whole account. They are signed out immediately and the API stops |
+| **Settings → Key limit** | change the total key limit, then **Save settings**. Raising it gives them more keys |
+| **Reset usage to 0** | gives them the full limit again |
+| **New password** / **New API key** | the old password or key stops working immediately |
+| **Revoke all their keys** | every key they made stops working in the app |
+| **Delete reseller** | removes the account (their keys stay valid unless you revoke them first) |
+
+Every reseller action (login, keys made, via panel or API) is written to the **Activity log** with the reseller's name.
+
+### Reseller: the SENSI MACRO panel
+1. Open `/panel/` → sign in with username + password.
+2. Top shows **keys left** and a meter of the limit.
+3. Choose how many keys per tap (1, 5, 10, 25), optionally type the customer's name, then tap **Get key** on the row for **1 day … 7 days**. The keys appear in a terminal box with Copy buttons.
+4. **My keys** tab lists everything they made. **API** tab shows their API key info and ready-to-copy examples.
+5. Keys are 1 device each. The validity timer starts at the customer's first login in the app (same as your own keys).
+
+### Reseller: the key-fetch API
+Send the API key in the `X-Api-Key` header (never in the URL). Days must be 1 to 7, up to 50 keys per request, 60 requests per minute.
+```
+# get 3 keys valid for 5 days
+curl -X POST https://YOUR-SERVICE.onrender.com/api/v1/keys \
+  -H "X-Api-Key: srtx.USERNAME.xxxxxxxx" -H "Content-Type: application/json" \
+  -d '{"days":5,"count":3,"label":"Aman"}'
+
+# limit + usage
+curl https://YOUR-SERVICE.onrender.com/api/v1/me -H "X-Api-Key: srtx.USERNAME.xxxxxxxx"
+
+# list their keys
+curl https://YOUR-SERVICE.onrender.com/api/v1/keys -H "X-Api-Key: srtx.USERNAME.xxxxxxxx"
+```
+Answers: `201 {"success":true,"keys":[…],"keysLeft":N}`. Errors: `401` bad key, `403` limit reached / API blocked / account blocked, `400` bad days.
+
+### Notes
+- The limit is checked inside the database, so even 100 requests at once can never go over it.
+- 5 wrong passwords lock that username for 15 minutes.
+- No new Render settings are needed. The reseller panel uses your existing `ADMIN_PASS` / `SESSION_SECRET` for cookie signing. Because it re-reads the account on every request, blocking takes effect instantly.
+- Test list: create a reseller with limit 3, get 3 keys, the 4th must fail; press **Block API**, the day buttons lock; log a key into the app, it must log in normally.
+
+---
+
 ## Test list (do all of these once)
 
 | Test | Expected |
