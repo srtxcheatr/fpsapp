@@ -68,6 +68,7 @@ async function createKeys(db, o = {}, nowMs = Date.now()) {
     const fixedExpiry = o.expiresAt ? L.parseFutureDate(o.expiresAt, nowMs) : null;
 
     const base = key => ({
+        ...(o.extra || {}),                                                   // e.g. { resellerId } — can never override the core fields below
         key, prefix: key.split('_')[0], siteId: undefined, createdAt: new Date(nowMs).toISOString(),
         expiresAt: fixedExpiry, durationDays, loginLimit, loginCount: 0, type: o.type === 'standard' ? 'standard' : 'custom', status: 'active',
         label: String(o.label || '').slice(0, 60), note: String(o.note || '').slice(0, 200),

@@ -10,6 +10,7 @@ const cors      = require('cors');
 const L         = require('./lib');
 const S         = require('./service');
 const { mountAppRoutes } = require('./appRoutes');
+const { mountResellerRoutes } = require('./resellerRoutes');
 const { HttpError, SITE_PREFIXES, KEY_RE } = L;
 
 /**
@@ -109,7 +110,7 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
     });
 
     // ── Global limiter + slow-down (admin has its own limiter below) ──
-    const notAdmin = req => req.path.startsWith('/api/admin') || req.path.startsWith('/admin') || req.path.startsWith('/api/app');   // /api/app has its own limiters
+    const notAdmin = req => /^\/(api\/(admin|app|reseller|v1)|admin|owner|panel)(\/|$)/.test(req.path);   // these have their own limiters
     app.use(rateLimit({ windowMs: 15 * 60 * 1000, limit: 150, skip: notAdmin, standardHeaders: true, legacyHeaders: false,
         handler: (req, res) => { recordFail(req.ip); res.status(429).json({ error: 'Too many requests. Slow down.' }); } }));
     app.use(slowDown({ windowMs: 5 * 60 * 1000, delayAfter: 60, delayMs: used => (used - 60) * 50, maxDelayMs: 5000, skip: notAdmin }));
@@ -380,10 +381,18 @@ function createApp({ getDb, serverTimestamp, config, log, state }) {
 
     // ═════════════════ APP CONTROL (server-driven UI, assets, gate) ═════════════════
     mountAppRoutes(app, { needDb, safe, adminAuth, audit, recordFail, config, log });
+    mountResellerRoutes(app, { needDb, safe, adminAuth, audit, recordFail, config, getDb, log });
 
     // ═════════════════ ADMIN PANEL (static) ═════════════════
-    app.get('/admin', (req, res) => res.redirect(301, '/admin/'));
+    // Redirect only when there is NO trailing slash (Express matches '/admin/' to '/admin' too → it used to redirect to itself forever)
+    const addSlash = to => (req, res, next) => req.originalUrl.split('?')[0].endsWith('/') ? next() : res.redirect(301, to);
+    app.get('/admin', addSlash('/admin/'));
     app.use('/admin', adminLimiter, express.static(path.join(__dirname, '..', 'public', 'admin'), { index: 'index.html', dotfiles: 'ignore', maxAge: 0 }));
+    app.get('/owner', (req, res) => res.redirect(301, '/admin/'));   // '/owner/' too — different target, so no loop                      // the admin panel is now the OWNER panel
+    // ═════════════════ RESELLER PANEL "SENSI MACRO" (static) ═════════════════
+    app.get('/panel', addSlash('/panel/'));
+    app.use('/panel', rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false, handler: (req, res) => res.status(429).send('Too many requests') }),
+        express.static(path.join(__dirname, '..', 'public', 'panel'), { index: 'index.html', dotfiles: 'ignore', maxAge: 0 }));
 
     // ── 404 + error handler ─────────────────────────────────────
     app.use((req, res) => res.status(404).json({ error: 'Not found' }));
