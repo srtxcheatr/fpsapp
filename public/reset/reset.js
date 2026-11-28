@@ -3,7 +3,7 @@
 const app = document.getElementById('app'), user = app.dataset.user || '';
 const inp = document.getElementById('key'), btn = document.getElementById('go'), out = document.getElementById('result');
 const show = (kind, text) => { out.hidden = false; out.className = kind; out.textContent = text; };
-inp.addEventListener('input', () => { inp.value = inp.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''); });
+inp.addEventListener('input', () => { inp.value = inp.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''); });
 inp.addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
 btn.addEventListener('click', go);
 async function go() {
