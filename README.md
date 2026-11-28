@@ -224,7 +224,7 @@ See **HOWTOUSE.md** (deploy steps + the Google AI Studio prompt for the app).
 
 ## 🆕 v6 — per-admin key style + reset pages
 
-**Key style per admin (reseller).** Owner panel → Resellers → + New reseller: username · password · key limit · **key starts with** (2–10 chars, e.g. `SRT`, `XE`) · **key length** (6–8) · **style** `plain` (`SRT_XXXXXX`) or `grouped` (`XE_XX_XX_XX_XX`). Editable later under *Settings* (new keys only). Accounts created before v6 keep `SENSI_` + 8 chars.
+**Key style per admin (reseller).** Owner panel → Resellers → + New reseller: username · password · key limit · **key starts with** (2–10 chars, e.g. `SRT`, `XE`) · **key length** (6–8) · **style** `plain` (`SRT_XXXXXX`), `grouped` (`XE_XX_XX_XX_XX`) or `dashed` (`XC-XXXX-XXXX-XXXX`, length 8/12/16). Editable later under *Settings* (new keys only). Accounts created before v6 keep `SENSI_` + 8 chars.
 
 **Reset for every key type.** `POST /api/reset-device {key, reseller?}` accepts any valid key style.
 
