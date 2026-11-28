@@ -1,1 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Owner Panel</title>
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main id="login" hidden>
+  <form id="loginForm" class="card narrow">
+    <h1>Owner Panel</h1>
+    <p class="hint">Sign in to manage keys, resellers and the app.</p>
+    <label>Password <input id="pw" type="password" autocomplete="current-password" required autofocus></label>
+    <details class="adv"><summary>Server settings</summary>
+      <label>Server URL <input id="base" type="url" placeholder="https://fpsapp.onrender.com" autocomplete="off"><small>Leave blank to use this site.</small></label>
+    </details>
+    <button class="primary big">Sign in</button>
+    <p id="loginErr" class="err" role="alert"></p>
+  </form>
+</main>
 
+<main id="app" hidden>
+  <header>
+    <h1>Owner Panel</h1>
+    <nav>
+      <button data-tab="keys" class="tab on">Keys</button>
+      <button data-tab="resellers" class="tab">Resellers</button>
+      <button data-tab="app" class="tab">App control</button>
+      <button data-tab="audit" class="tab">Activity log</button>
+      <button id="logout">Sign out</button>
+    </nav>
+  </header>
+  <p id="toast" role="status" aria-live="polite"></p>
+
+  <section id="tab-keys">
+    <div id="stats" class="stats"></div>
+
+    <div class="topbar">
+      <input id="q" type="search" placeholder="Search key, label, note or device…" aria-label="Search keys">
+      <button id="newKey" class="primary">+ New keys</button>
+    </div>
+
+    <section id="genPanel" class="card" hidden>
+      <div class="cardhead"><h2>Generate keys</h2><button id="genClose" class="link" aria-label="Close">✕</button></div>
+      <form id="genForm">
+        <div class="grid">
+          <label>Site <select name="siteId"><option value="site1">SRT</option><option value="site2">SENSI</option><option value="site3">KALEYYY</option><option value="site4">NK</option></select></label>
+          <label>How many keys <input name="count" type="number" inputmode="numeric" min="1" max="100" value="1"></label>
+          <label>Devices per key <input name="loginLimit" type="number" inputmode="numeric" min="1" max="1000" value="1"></label>
+        </div>
+        <div class="field">
+          <span class="lbl">Valid for <small>(timer starts at first login)</small></span>
+          <div class="chips" id="durChips">
+            <button type="button" data-d="1">1 day</button><button type="button" data-d="7" class="on">7 days</button>
+            <button type="button" data-d="30">30 days</button><button type="button" data-d="90">90 days</button>
+            <button type="button" data-d="365">1 year</button>
+          </div>
+          <input name="duration" type="number" inputmode="numeric" min="1" max="3650" value="7" aria-label="Custom number of days">
+        </div>
+        <label>Label <small>(optional, helps you find it later)</small><input name="label" maxlength="60" placeholder="e.g. John – Discord"></label>
+        <details class="adv"><summary>More options</summary>
+          <div class="grid">
+            <label>Fixed expiry date <small>(overrides “valid for”)</small><input name="expiresAt" type="datetime-local"></label>
+            <label>Key length (6–32) <input name="length" type="number" inputmode="numeric" min="6" max="32" value="8"></label>
+            <label>Custom key <small>(1 key only, 4–32 A–Z / 0–9)</small><input name="customKey" maxlength="40" autocomplete="off"></label>
+            <label class="wide">Note <input name="note" maxlength="200"></label>
+          </div>
+        </details>
+        <button class="primary big" id="genBtn">Generate</button>
+      </form>
+      <div id="genOutWrap" hidden>
+        <div class="cardhead"><b id="genTitle"></b>
+          <span><button id="genCopy">Copy all</button> <button id="genDl">Download .txt</button></span></div>
+        <pre id="genOut"></pre>
+      </div>
+    </section>
+
+    <div class="filters">
+      <select id="fStatus" aria-label="Status"><option value="all">All statuses</option><option value="active">Active</option><option value="unused">Never used</option><option value="full">Device limit reached</option><option value="expired">Expired</option><option value="revoked">Revoked</option></select>
+      <select id="fSite" aria-label="Site"><option value="">All sites</option><option value="site1">SRT</option><option value="site2">SENSI</option><option value="site3">KALEYYY</option><option value="site4">NK</option></select>
+      <select id="fType" aria-label="Type"><option value="">Any type</option><option value="standard">Generated</option><option value="custom">Custom</option></select>
+      <select id="fSort" aria-label="Sort"><option value="created">Newest first</option><option value="expires">By expiry</option><option value="used">Last used</option><option value="key">A–Z</option></select>
+      <button id="clearFilters" class="link" hidden>Clear filters</button>
+    </div>
+
+    <div id="bulk" class="bulk" hidden>
+      <b id="selCount"></b>
+      <button id="selAll" class="link"></button>
+      <span class="sp"></span>
+      <button data-bulk="extend">Extend…</button><button data-bulk="revoke">Revoke</button>
+      <button data-bulk="restore">Restore</button><button data-bulk="delete" class="danger">Delete</button>
+      <button id="selClear" class="link">Clear</button>
+    </div>
+
+    <div class="tablewrap" id="tableWrap"><table>
+      <thead><tr><th class="c"><input type="checkbox" id="chkAll" aria-label="Select all on this page"></th><th>Key</th><th>Status</th><th>Expires</th><th>Devices</th><th>Label</th><th>Last used</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+      <p id="empty" class="empty" hidden></p>
+    </div>
+    <div class="pager"><button id="prev">‹ Prev</button><span id="pageInfo"></span><button id="next">Next ›</button></div>
+  </section>
+
+  <section id="tab-resellers" hidden>
+    <div id="rsBody"></div>
+  </section>
+
+  <section id="tab-app" hidden>
+    <div id="appBody" class="appgrid"></div>
+  </section>
+
+  <section id="tab-audit" hidden>
+    <div class="topbar"><button id="verifyChain">Check log integrity</button><span id="chainRes"></span></div>
+    <div class="tablewrap"><table><thead><tr><th>#</th><th>Time (UTC)</th><th>Action</th><th>Keys</th><th>Details</th></tr></thead><tbody id="auditRows"></tbody></table></div>
+    <div class="pager"><button id="auditMore">Older ›</button></div>
+  </section>
+</main>
+
+<dialog id="dlg"><form method="dialog" id="dlgForm"><h3 id="dlgTitle"></h3><div id="dlgBody"></div>
+  <menu><button value="ok" class="primary" id="dlgOk">OK</button><button value="cancel" id="dlgCancel">Cancel</button></menu></form></dialog>
+
+<dialog id="detail"><div id="detailBody"></div></dialog>
+<script src="admin.js"></script>
+<script src="admin-app.js"></script>
+<script src="owner-resellers.js"></script>
+</body>
+</html>
