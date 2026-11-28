@@ -219,3 +219,14 @@ See **HOWTOUSE.md** (deploy steps + the Google AI Studio prompt for the app).
 * Reseller panel API (cookie + CSRF): `/api/reseller/login|session|logout|keys|keys/generate|api-key`.
 * Key-fetch API (`X-Api-Key`): `GET /api/v1/me`, `GET /api/v1/keys`, `POST /api/v1/keys {days:1-7,count:1-50,label}`.
 * Fixed: `/admin/` used to redirect to itself (trailing-slash loop).
+
+---
+
+## 🆕 v6 — per-admin key style + reset pages
+
+**Key style per admin (reseller).** Owner panel → Resellers → + New reseller: username · password · key limit · **key starts with** (2–10 chars, e.g. `SRT`, `XE`) · **key length** (6–8) · **style** `plain` (`SRT_XXXXXX`) or `grouped` (`XE_XX_XX_XX_XX`). Editable later under *Settings* (new keys only). Accounts created before v6 keep `SENSI_` + 8 chars.
+
+**Reset for every key type.** `POST /api/reset-device {key, reseller?}` accepts any valid key style.
+
+**Reset pages.** `https://<server>/reset/<username>/reset` = that admin's own reset page (only resets keys that admin made). `https://<server>/reset` = general page.
+For a PHP site, copy `index.php` per admin and set `define('RESELLER','username')`.
